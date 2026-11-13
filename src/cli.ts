@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ledger } from "./ledger.ts";
 import { history, quotes } from "./market.ts";
+import { checkMarket } from "./market-check.ts";
 import { loadSettings } from "./config.ts";
 import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
@@ -76,7 +77,7 @@ function demo(file: string) {
 try {
   requireThat(
     file,
-    "用法 node src/cli.ts <init|status|apply|quotes|history|review|agent-cycle|agent-mark|agent-review|demo> <配置文件或演示数据库> [参数]",
+    "用法 node src/cli.ts <init|status|apply|quotes|history|market-check|review|agent-cycle|agent-mark|agent-review|demo> <配置文件或演示数据库> [参数]",
   );
   if (action === "demo") demo(resolve(file));
   else {
@@ -85,7 +86,17 @@ try {
       requireThat(process.env.AGENT_AUTOLOOP_CONTEXT, "本命令由中台接单程序调用，需要轮次资料文件");
       return read(process.env.AGENT_AUTOLOOP_CONTEXT);
     };
-    if (action === "agent-cycle") console.log(await cycle(settings, context()));
+    if (action === "market-check") {
+      const result = await checkMarket(
+        args[0] ? args[0].split(",") : settings.account.symbols,
+        settings.account.maxQuoteAgeSeconds,
+        args[1] === undefined ? 60 : Number(args[1]),
+        undefined,
+        settings.account.slippageBps,
+      );
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.readSucceeded) process.exitCode = 1;
+    } else if (action === "agent-cycle") console.log(await cycle(settings, context()));
     else if (action === "agent-mark") console.log(await markAccount(settings));
     else if (action === "agent-review") console.log(weekly(settings, context()));
     else if (action === "quotes") console.log(JSON.stringify(await quotes(settings.account.symbols), null, 2));
