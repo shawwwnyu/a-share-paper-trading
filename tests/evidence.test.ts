@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
+import { verifySnapshot } from "../src/scan-snapshot.ts";
 import { runScan } from "../src/monitor-run.ts";
 import { cycle } from "../src/integrations/agent-autoloop.ts";
 import { chat } from "../src/integrations/chat.ts";
@@ -510,6 +511,8 @@ test("scan command saves the exact evidence snapshot, replays it once, and prese
     const state = env.ledger.state();
     assert.equal(state.watchlist.length, 1);
     const saved = JSON.parse(readFileSync(join(folder, `${state.watchlistScan!.id}.json`), "utf8"));
+    assert.equal(saved.schema, "screening-snapshot-v1");
+    assert.doesNotThrow(() => verifySnapshot(saved));
     assert.deepEqual(saved.evidence, dataset());
     assert.deepEqual(saved.report.assessments[1].reasons, ["筛选证据缺失"]);
     writeFileSync(settings.screeningEvidence, "{broken");

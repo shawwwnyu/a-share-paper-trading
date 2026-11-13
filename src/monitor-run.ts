@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "
 import { join } from "node:path";
 import { loadUniverse, scanMarket } from "./monitor.ts";
 import type { Universe, ScanReport } from "./monitor.ts";
+import { sealSnapshot } from "./scan-snapshot.ts";
 import { EVIDENCE_VERSION, screenWithEvidence } from "./evidence.ts";
 import type { EvidenceDataset } from "./evidence.ts";
 import { Ledger } from "./ledger.ts";
@@ -40,7 +41,8 @@ export async function runScan(settings: Settings, runKey?: string) {
         ? screenWithEvidence(result.report, result.rows, evidence!, result.report.at)
         : result.report;
       result.report = report;
-      save(join(folder, `${report.id}.json`), { ...result, universe, ...(evidence && { evidence }) });
+      const raw = { ...result, universe, ...(evidence && { evidence }) };
+      save(join(folder, `${report.id}.json`), report.complete ? sealSnapshot(raw, new Date().toISOString()) : raw);
       if (runFile) save(runFile, report);
     }
     let applied = false;

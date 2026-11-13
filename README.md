@@ -182,4 +182,4 @@ npm run format:check
 
 Loop 私聊支持：`查看进度`、`扫描市场`、`查看自选`、`查看持仓`、`查看复盘`、`开发：具体需求`、`继续开发`。普通买卖文字不执行成交。
 
-[持续开发路线](docs/roadmap.md)列明当前能力和后续任务；[实测记录](docs/monitor-result.md)区分真实扫描与固定数据验证。筛选首版尚未完成动态股票池样本外验证。
+[持续开发路线](docs/roadmap.md)列明当前能力和后续任务；[实测记录](docs/monitor-result.md)区分真实扫描与固定数据验证。动态自选时间外比较工具已提供，支持封存当时股票池、证据并按相同成交约束比较基础与候选规则；使用 `node src/cli.ts validate-dynamic <模拟验证方案> <动态历史资料>`，不打开账户数据库，详见[动态验证记录](docs/tasks/dynamic-validation-result.md)。真实历史资料及筛选效果尚未验证，比较报告不直接授权启用策略。

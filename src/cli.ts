@@ -9,6 +9,7 @@ import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
 import { requireThat } from "./types.ts";
 import type { Command, Quote } from "./types.ts";
+import { validateDynamic } from "./dynamic-validation.ts";
 import { runScan } from "./monitor-run.ts";
 import { chat } from "./integrations/chat.ts";
 
@@ -81,7 +82,12 @@ try {
     file,
     "用法 node src/cli.ts <init|status|apply|quotes|history|market-check|review|agent-cycle|agent-mark|agent-review|demo> <配置文件或演示数据库> [参数]",
   );
-  if (action === "demo") demo(resolve(file));
+  if (action === "validate-dynamic") {
+    requireThat(args[0], "用法 node src/cli.ts validate-dynamic <模拟验证方案> <动态历史资料>");
+    const report = validateDynamic(read(file), read(args[0]));
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.valid) process.exitCode = 1;
+  } else if (action === "demo") demo(resolve(file));
   else {
     const settings = loadSettings(file);
     const context = () => {
