@@ -9,7 +9,7 @@ import { expiryReason, liveOrder, orderedApprovals, orderPriority } from "../ris
 import { checkSignalQuote, riskSignal } from "../signals.ts";
 import { review, renderReview } from "../review.ts";
 import { chinaDay, requireThat, timestamp } from "../types.ts";
-import type { Bar, Command, Dataset, State } from "../types.ts";
+import type { Bar, Command, Dataset, Quote, State } from "../types.ts";
 import type { Settings } from "../config.ts";
 
 type Answer = {
@@ -144,7 +144,9 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           ...state.lots.map((lot) => lot.symbol),
         ]),
       ];
-      const observed = symbols.length ? await quotes(symbols) : [];
+      const observed: Quote[] = [];
+      for (let start = 0; start < symbols.length; start += 100)
+        observed.push(...(await quotes(symbols.slice(start, start + 100))));
       const checkedAt = clock();
       expireOrders(ledger, checkedAt);
       for (const q of observed) {
@@ -168,7 +170,8 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
       state = ledger.state();
       let bars: Bar[] = [];
       try {
-        if (symbols.length) bars = (await history(symbols)).bars;
+        for (let start = 0; start < symbols.length; start += 100)
+          bars.push(...(await history(symbols.slice(start, start + 100))).bars);
       } catch (error) {
         problems.push(`历史行情读取失败，已保留风险退出建议：${(error as Error).message}`);
       }

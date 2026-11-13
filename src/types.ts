@@ -144,7 +144,21 @@ export type Proposal = {
   approvedBy?: string;
   approvedAt?: string;
 };
+export type ManualWatch = { symbol: string; name: string; reason: string; by: string; at: string };
+export type WatchChange = {
+  at: string;
+  symbol: string;
+  from: "selected" | "absent";
+  to: "selected" | "absent";
+  reasons: string[];
+  scan?: string;
+  by?: string;
+};
 export type State = {
+  manualWatchlist: ManualWatch[];
+  watchlistExclusions: ManualWatch[];
+  watchlistHistory: WatchChange[];
+  watchlistReport?: ScanReport;
   watchlist: Candidate[];
   watchlistScan?: { id: string; rule: string; at: string; universeSize: number };
   corporateActions: { symbol: string; day: string; shareRatio: number; cashPerShare: number; reference: string }[];
@@ -167,6 +181,7 @@ export type State = {
 };
 export type Command =
   | { type: "watchlist"; scan: ScanReport }
+  | { type: "manual-watch"; action: "add" | "remove"; symbol: string; name?: string; reason: string; by: string }
   | { type: "init"; config: AccountConfig; strategy: Strategy }
   | { type: "signal"; signal: Signal }
   | { type: "decide"; signal: string; approve: boolean; by: string; decidedAt?: string }

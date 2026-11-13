@@ -1,3 +1,5 @@
+import { checkEvidenceBuy } from "./evidence.ts";
+import { applyWatchlist, manualWatch } from "./watchlist.ts";
 import { DatabaseSync } from "node:sqlite";
 import { checkQuote, checkQuantity, makeFill, bookFill } from "./execution.ts";
 import { validateCandidate } from "./strategy.ts";
@@ -7,6 +9,9 @@ import type { Command, Point, Quote, State } from "./types.ts";
 
 export const emptyState = (): State => ({
   watchlist: [],
+  manualWatchlist: [],
+  watchlistExclusions: [],
+  watchlistHistory: [],
   corporateActions: [],
   config: null,
   active: "",
@@ -112,20 +117,12 @@ function apply(state: State, command: Command, now: string) {
           symbolCode(candidate.symbol);
           requireThat(candidate.reasons.length > 0, "自选缺少入选依据");
         }
-        state.watchlist = structuredClone(scan.selected);
-        state.watchlistScan = { id: scan.id, rule: scan.rule, at: scan.at, universeSize: scan.universeSize };
-        for (const order of Object.values(state.orders)) {
-          if (
-            order.side === "buy" &&
-            ["pending", "approved"].includes(order.status) &&
-            !scan.selected.some((c) => c.symbol === order.symbol)
-          ) {
-            order.status = "expired";
-            order.closedReason = "已移出自选";
-          }
-        }
+        applyWatchlist(state, scan, now);
         break;
       }
+      case "manual-watch":
+        manualWatch(state, command, now);
+        break;
       case "signal": {
         const s = command.signal;
         requireThat(/^[\w.-]{1,120}$/.test(s.id) && !state.orders[s.id], "信号编号无效或重复");
@@ -145,6 +142,7 @@ function apply(state: State, command: Command, now: string) {
           timestamp(s.at) <= timestamp(now) && timestamp(s.expiresAt) > timestamp(now),
           "信号时间或有效期无效",
         );
+        if (s.side === "buy") checkEvidenceBuy(state, s.symbol, now);
         const maxAge = state.config.risk?.maxOrderAgeMinutes;
         const expiresAt =
           maxAge === undefined
@@ -188,6 +186,7 @@ function apply(state: State, command: Command, now: string) {
       case "fill": {
         const order = state.orders[command.signal];
         requireThat(order, "找不到信号");
+        if (order.side === "buy") checkEvidenceBuy(state, order.symbol, now);
         const fill = makeFill(state, order, command.quote, now);
         checkBuyRisk(state, fill, command.quote, command.quotes, now);
         bookFill(state, fill);

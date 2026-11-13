@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { parseQuotes, QUOTES } from "./market.ts";
 import { tradingTime } from "./execution.ts";
 import { chinaDay, requireThat, timestamp } from "./types.ts";
+import type { Assessment, ScreeningRecord } from "./evidence.ts";
 import type { Quote } from "./types.ts";
 
 export const DIRECTORY = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.";
@@ -17,6 +18,7 @@ export type Candidate = {
   score: number;
   reasons: string[];
   source: string;
+  evidence?: ScreeningRecord;
 };
 export type ScanReport = {
   id: string;
@@ -26,6 +28,8 @@ export type ScanReport = {
   observed: number;
   complete: boolean;
   selected: Candidate[];
+  eligible?: Candidate[];
+  assessments?: Assessment[];
   excluded: { symbol: string; reason: string }[];
   failures: { symbol: string; reason: string }[];
 };
@@ -198,6 +202,7 @@ export function screen(
     observed: covered.size,
     complete,
     selected: complete ? candidates.slice(0, 20) : [],
+    eligible: complete ? candidates : [],
     excluded,
     failures,
   };

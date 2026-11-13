@@ -43,9 +43,23 @@ export function chat(settings: Settings, context: { events?: { id: string | numb
         const file = join(settings.reports, "scan-latest.json");
         const scan = existsSync(file) ? read(file) : null;
         const selected = state?.watchlistScan ? state.watchlist : scan?.complete ? scan.selected : [];
-        text = selected.length
-          ? `自选观察名单（入选不代表买入）：\n${selected.map((c: any) => `${c.symbol} ${c.name}：${c.reasons.slice(0, 2).join("；")}`).join("\n")}`
-          : "还没有完整扫描生成的自选名单，可发送“扫描市场”。";
+        const manual =
+          state?.manualWatchlist.filter((item) => !selected.some((c: any) => c.symbol === item.symbol)) ?? [];
+        const observations = manual.map((item) => {
+          const reasons = state?.watchlistReport?.assessments?.find((a) => a.symbol === item.symbol)?.reasons;
+          return `${item.symbol} ${item.name}（仅观察）：${item.reason}；${reasons?.length ? reasons.join("；") : "尚未取得合格筛选证据"}`;
+        });
+        const exclusions = state?.watchlistExclusions.map((item) => `${item.symbol}：${item.reason}`) ?? [];
+        text = [
+          selected.length
+            ? `自选观察名单（入选不代表买入）：\n${selected.map((c: any) => `${c.symbol} ${c.name}：${c.reasons.slice(0, 2).join("；")}`).join("\n")}`
+            : "当前没有入选候选。",
+          ...(observations.length
+            ? [`人工自选（仅观察，证据合格后方可生成买入建议）：\n${observations.join("\n")}`]
+            : []),
+          ...(exclusions.length ? [`本人排除：\n${exclusions.join("\n")}`] : []),
+          ...(!selected.length && !manual.length && !exclusions.length ? ["可发送“扫描市场”更新观察名单。"] : []),
+        ].join("\n");
       } else if (/^(查看)?(持仓|账户)$/.test(words)) {
         text = state?.config
           ? `模拟账户可用现金 ${(state.cash / 100).toFixed(2)} 元，累计成交 ${state.fills.length} 笔。\n${state.lots.length ? state.lots.map((l) => `${l.symbol} ${l.quantity} 股，买入日 ${l.day}`).join("\n") : "当前没有持仓。"}`
