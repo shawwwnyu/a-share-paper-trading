@@ -72,6 +72,10 @@ function checkDataset(data: Dataset, symbols: string[]) {
 
 // Signals see only earlier closes. An order decided after a close first becomes eligible at the following open.
 export function backtest(strategy: Strategy, data: Dataset, config: AccountConfig, from: string): Performance {
+  requireThat(
+    !config.risk || Object.keys(config.risk).every((key) => key === "industries"),
+    "固定股池回测尚未支持账户风险规则，不能用它批准候选策略",
+  );
   checkStrategy(strategy);
   const days = checkDataset(data, config.symbols);
   const state: State = {
@@ -183,6 +187,8 @@ export function validateCandidate(
     from: null,
     to: null,
   };
+  if (config.risk && Object.keys(config.risk).some((key) => key !== "industries"))
+    report.reasons.push("固定股池验证尚未覆盖账户风险规则，保持现有策略");
   if (!data.marketRulesVerified || !data.corporateActionsVerified)
     report.reasons.push("缺少逐日涨跌停、停牌或公司行为核实记录");
   let days: string[];

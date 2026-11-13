@@ -5,9 +5,11 @@ import { Ledger, valueOf } from "../ledger.ts";
 import { buyQuantity, tradingTime } from "../execution.ts";
 import { quotes, history, isTradingDay } from "../market.ts";
 import { closesAsOf, direction } from "../strategy.ts";
+import { expiryReason, liveOrder, orderedApprovals, orderPriority } from "../risk.ts";
+import { checkSignalQuote, riskSignal } from "../signals.ts";
 import { review, renderReview } from "../review.ts";
 import { chinaDay, requireThat, timestamp } from "../types.ts";
-import type { Command, Dataset, State } from "../types.ts";
+import type { Bar, Command, Dataset, State } from "../types.ts";
 import type { Settings } from "../config.ts";
 
 type Answer = {
@@ -75,7 +77,7 @@ export function handleAnswers(ledger: Ledger, context: Context, now: string) {
 }
 export function pendingCards(state: State, now: string) {
   const cards = [];
-  for (const order of Object.values(state.orders)) {
+  for (const order of Object.values(state.orders).sort(orderPriority)) {
     if (order.status !== "pending" || timestamp(order.expiresAt) <= timestamp(now) || order.strategy !== state.active)
       continue;
     cards.push({
@@ -120,12 +122,18 @@ export function suggestion(state: State, result: ReturnType<typeof review>, now:
 function receipt(summary: string, body: object) {
   return `${summary}\n\n\`\`\`agent-autoloop\n${JSON.stringify(body)}\n\`\`\``;
 }
+function expireOrders(ledger: Ledger, now: string) {
+  const state = ledger.state();
+  if (Object.values(state.orders).some((order) => expiryReason(order, state, now)))
+    ledger.execute(`expire-${now}`, { type: "expire-orders" }, now);
+}
 export async function cycle(settings: Settings, context: Context, clock = () => new Date().toISOString()) {
   const ledger = new Ledger(settings.database);
   const problems: string[] = [];
   try {
     const now = clock();
     problems.push(...handleAnswers(ledger, context, now));
+    expireOrders(ledger, now);
     let state = ledger.state();
     requireThat(state.config, "请先初始化模拟账户");
     const day = chinaDay(now);
@@ -138,35 +146,59 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
       ];
       const observed = symbols.length ? await quotes(symbols) : [];
       const checkedAt = clock();
-      for (const order of Object.values(state.orders)) {
-        if (order.status !== "approved" || timestamp(order.expiresAt) <= timestamp(checkedAt)) continue;
+      expireOrders(ledger, checkedAt);
+      for (const q of observed) {
         try {
-          ledger.execute(
-            `fill-${order.id}`,
-            { type: "fill", signal: order.id, quote: observed.find((q) => q.symbol === order.symbol)! },
-            checkedAt,
-          );
+          const evaluatedAt = clock();
+          const signal = riskSignal(ledger.state(), q, evaluatedAt);
+          if (signal) ledger.execute(`signal-${signal.id}`, { type: "signal", signal }, evaluatedAt);
+        } catch (error) {
+          problems.push(`${q.symbol} ${(error as Error).message}`);
+        }
+      }
+      for (const order of orderedApprovals(ledger.state(), checkedAt)) {
+        try {
+          const q = observed.find((q) => q.symbol === order.symbol);
+          requireThat(q, `缺少 ${order.symbol} 的本次成交行情`);
+          ledger.execute(`fill-${order.id}`, { type: "fill", signal: order.id, quote: q, quotes: observed }, clock());
         } catch (error) {
           problems.push(`${order.symbol} ${(error as Error).message}`);
         }
       }
       state = ledger.state();
-      const data = symbols.length ? await history(symbols) : { bars: [] };
+      let bars: Bar[] = [];
+      try {
+        if (symbols.length) bars = (await history(symbols)).bars;
+      } catch (error) {
+        problems.push(`历史行情读取失败，已保留风险退出建议：${(error as Error).message}`);
+      }
       const active = state.strategies[state.active];
       for (const q of observed) {
-        const past = data.bars
+        state = ledger.state();
+        const past = bars
           .filter((b) => b.symbol === q.symbol && b.day < day)
           .sort((a, b) => a.day.localeCompare(b.day));
         const holding = state.lots.filter((lot) => lot.symbol === q.symbol).reduce((sum, lot) => sum + lot.quantity, 0);
         const side = direction(closesAsOf(past, state.corporateActions, day), active, holding > 0);
         if (!side || !past.length) continue;
+        const created = clock();
         const id = createHash("sha256").update(`${state.active}/${day}/${q.symbol}/${side}`).digest("hex").slice(0, 24);
         if (state.orders[id]) continue;
+        if (
+          Object.values(state.orders).some(
+            (order) =>
+              order.symbol === q.symbol &&
+              order.side === "sell" &&
+              (liveOrder(order, state, created) ||
+                (side === "sell" && chinaDay(order.at) === day && order.strategy === state.active)),
+          )
+        )
+          continue;
         const quantity =
           side === "sell" ? holding : buyQuantity(q.symbol, (state.cash * active.allocationBps) / 10000, q.price);
         if (!quantity) continue;
-        const created = clock();
         try {
+          checkSignalQuote(state, q, created);
           ledger.execute(
             `signal-${id}`,
             {
@@ -190,8 +222,9 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
         }
       }
     }
-    state = ledger.state();
     const finish = clock();
+    expireOrders(ledger, finish);
+    state = ledger.state();
     const resolveCards = (context.open ?? [])
       .filter((card) =>
         Object.values(state.orders).some(

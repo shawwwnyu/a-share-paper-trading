@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { checkQuote, checkQuantity, makeFill, bookFill } from "./execution.ts";
 import { validateCandidate } from "./strategy.ts";
+import { checkBuyRisk, checkRiskPolicy, expiryReason, liveOrder } from "./risk.ts";
 import { checkStrategy, chinaDay, integer, requireThat, symbolCode, timestamp } from "./types.ts";
 import type { Command, Point, Quote, State } from "./types.ts";
 
@@ -83,6 +84,7 @@ function apply(state: State, command: Command, now: string) {
       "自选股池或行情有效期无效",
     );
     c.symbols.forEach(symbolCode);
+    if (c.risk !== undefined) checkRiskPolicy(c.risk);
     checkStrategy(command.strategy);
     state.config = structuredClone(c);
     state.strategies[command.strategy.id] = structuredClone(command.strategy);
@@ -117,8 +119,10 @@ function apply(state: State, command: Command, now: string) {
             order.side === "buy" &&
             ["pending", "approved"].includes(order.status) &&
             !scan.selected.some((c) => c.symbol === order.symbol)
-          )
+          ) {
             order.status = "expired";
+            order.closedReason = "已移出自选";
+          }
         }
         break;
       }
@@ -141,7 +145,27 @@ function apply(state: State, command: Command, now: string) {
           timestamp(s.at) <= timestamp(now) && timestamp(s.expiresAt) > timestamp(now),
           "信号时间或有效期无效",
         );
-        state.orders[s.id] = { ...s, status: "pending" };
+        const maxAge = state.config.risk?.maxOrderAgeMinutes;
+        const expiresAt =
+          maxAge === undefined
+            ? s.expiresAt
+            : new Date(Math.min(timestamp(s.expiresAt), timestamp(s.at) + maxAge * 60000)).toISOString();
+        requireThat(timestamp(expiresAt) > timestamp(now), "风险设置中的委托有效期已过期");
+        const live = Object.values(state.orders).filter(
+          (order) => order.symbol === s.symbol && liveOrder(order, state, now),
+        );
+        if (s.side === "sell") {
+          const holding = state.lots
+            .filter((lot) => lot.symbol === s.symbol)
+            .reduce((sum, lot) => sum + lot.quantity, 0);
+          requireThat(s.quantity <= holding, "卖出建议不能超过实际持仓");
+          requireThat(!live.some((order) => order.side === "sell"), "已有有效卖出建议，请先处理原建议");
+          for (const order of live.filter((order) => order.side === "buy")) {
+            order.status = "expired";
+            order.closedReason = "卖出建议优先，结束加仓委托";
+          }
+        } else requireThat(!live.some((order) => order.side === "sell"), "已有卖出建议，退出优先，暂不加仓");
+        state.orders[s.id] = { ...s, expiresAt, status: "pending" };
         break;
       }
       case "decide": {
@@ -155,6 +179,7 @@ function apply(state: State, command: Command, now: string) {
         requireThat(timestamp(at) >= timestamp(order.at) && timestamp(at) <= timestamp(now), "确认时间无效");
         const expired = timestamp(now) >= timestamp(order.expiresAt) || order.strategy !== state.active;
         order.status = command.approve ? (expired ? "expired" : "approved") : "rejected";
+        if (expired && command.approve) order.closedReason = "确认时委托已过期或策略版本已变";
         order.decision = command.approve;
         order.confirmedAt = at;
         order.by = command.by;
@@ -164,11 +189,21 @@ function apply(state: State, command: Command, now: string) {
         const order = state.orders[command.signal];
         requireThat(order, "找不到信号");
         const fill = makeFill(state, order, command.quote, now);
+        checkBuyRisk(state, fill, command.quote, command.quotes, now);
         bookFill(state, fill);
         state.quotes[fill.symbol] = command.quote;
         order.status = "filled";
         break;
       }
+      case "expire-orders":
+        for (const order of Object.values(state.orders)) {
+          const reason = expiryReason(order, state, now);
+          if (reason) {
+            order.status = "expired";
+            order.closedReason = reason;
+          }
+        }
+        break;
       case "mark":
         markQuotes(state, command.quotes, now);
         state.points.push(point(state, now));

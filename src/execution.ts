@@ -45,7 +45,8 @@ export function costs(price: number, quantity: number, side: "buy" | "sell", c: 
 export function makeFill(state: State, order: Order, q: Quote, now: string): Fill {
   const c = state.config!;
   requireThat(order.status === "approved", "交易尚未确认或已处理");
-  requireThat(timestamp(now) <= timestamp(order.expiresAt), "确认的交易已过期，请重新生成信号");
+  requireThat(timestamp(now) < timestamp(order.expiresAt), "确认的交易已过期，请重新生成信号");
+  requireThat(order.strategy === state.active, "交易策略版本已变化，请重新生成信号");
   requireThat(q.symbol === order.symbol, "行情与交易股票不一致");
   checkQuote(q, now, c.maxQuoteAgeSeconds);
   requireThat(timestamp(q.at) > timestamp(order.confirmedAt!), "只能使用确认之后的行情成交");

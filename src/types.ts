@@ -1,5 +1,16 @@
 import type { Candidate, ScanReport } from "./monitor.ts";
 export type Strategy = { id: string; lookback: number; entryBps: number; exitBps: number; allocationBps: number };
+export type RiskPolicy = {
+  maxTotalBps?: number;
+  maxSymbolBps?: number;
+  maxPositions?: number;
+  maxIndustryBps?: number;
+  industries?: Record<string, string>;
+  stopLossBps?: number;
+  takeProfitBps?: number;
+  maxHoldingDays?: number;
+  maxOrderAgeMinutes?: number;
+};
 export type AccountConfig = {
   cash: number;
   commissionBps: number;
@@ -9,6 +20,7 @@ export type AccountConfig = {
   slippageBps: number;
   maxQuoteAgeSeconds: number;
   symbols: string[];
+  risk?: RiskPolicy;
 };
 export type Quote = {
   symbol: string;
@@ -41,6 +53,7 @@ export type Order = Signal & {
   confirmedAt?: string;
   by?: string;
   decision?: boolean;
+  closedReason?: string;
 };
 export type Lot = {
   symbol: string;
@@ -157,7 +170,8 @@ export type Command =
   | { type: "init"; config: AccountConfig; strategy: Strategy }
   | { type: "signal"; signal: Signal }
   | { type: "decide"; signal: string; approve: boolean; by: string; decidedAt?: string }
-  | { type: "fill"; signal: string; quote: Quote }
+  | { type: "fill"; signal: string; quote: Quote; quotes?: Quote[] }
+  | { type: "expire-orders" }
   | { type: "mark"; quotes: Quote[] }
   | { type: "cash"; amount: number; quotes: Quote[]; note: string }
   | {

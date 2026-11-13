@@ -12,8 +12,8 @@
    - 若为首次启动或 `chosen` 为“继续开发下一阶段”，检查工作树与 `docs/progress.json`，从 `docs/roadmap.md` 选择第一项尚未验收的任务。
 2. **先写测试，再做实现**：
    - 先写能复现缺失行为或边界的测试，再编写实现。
-   - Windows PowerShell 若限制 `.ps1`，使用 `npm.cmd` 调用脚本：依次通过 `npm.cmd test`、`npm.cmd run typecheck`、`npm.cmd run format:check`；若改动了 `src/integrations/` 或 `integrations/agent-autoloop/`，设置 `AGENT_AUTOLOOP_REPO` 为 `C:\Users\xingxiaoyu\.agent-autoloop\app` 并通过 `npm.cmd run test:integration`。
-   - 公开网络在开发沙箱内不可访问时，完成离线验证并写清待本机验收步骤，不提高权限或把 fixture 说成实测。测试不连接券商、不发送真实消息。
+   - Linux 下直接用 `npm`，Windows PowerShell 若限制 `.ps1` 则用 `npm.cmd`：依次通过 `test`、`run typecheck`、`run format:check`；若改动了 `src/integrations/` 或 `integrations/agent-autoloop/`，设置 `AGENT_AUTOLOOP_REPO` 为已安装中台源码目录（Linux 为 `/root/.agent-autoloop/app`，Windows 为 `C:\Users\xingxiaoyu\.agent-autoloop\app`）并通过 `run test:integration`。
+   - 公开网络在开发沙箱内不可访问时，完成离线验证并写清待验收步骤，不提高权限或把 fixture 说成实测。测试不连接券商、不发送真实消息。
 3. **落盘提交与边界隔离**：
    - 一轮只交付一个可验收增量。更新 `docs/progress.json`（摘要与剩余 `next` 列表）并在 `docs/tasks/` 记录本阶段验收结果，通过格式检查后在当前开发分支创建 Git 提交，保持工作树干净。
    - 不合并 `main`、不发布、不改账户参数、不替本人确认交易、不直接覆盖 `~/.agent-autoloop/paper-trading` 下的运行副本或私人账户。需要更新运行副本时，结论与卡片写明“代码已提交开发分支，运行副本待复核更新”。
