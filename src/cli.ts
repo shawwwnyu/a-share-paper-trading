@@ -9,6 +9,7 @@ import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
 import { requireThat } from "./types.ts";
 import type { Command, Quote } from "./types.ts";
+import { saveDailyReview } from "./daily-report.ts";
 import { validateDynamic } from "./dynamic-validation.ts";
 import { runScan } from "./monitor-run.ts";
 import { chat } from "./integrations/chat.ts";
@@ -96,7 +97,10 @@ try {
     };
     if (action === "scan-market" || action === "agent-scan")
       console.log(await runScan(settings, process.env.AGENT_AUTOLOOP_RUN));
-    else if (action === "agent-chat") console.log(chat(settings, context()));
+    else if (action === "daily-review") {
+      requireThat(args[0], "请指定日报日期，例如 2026-11-13");
+      console.log(saveDailyReview(settings, args[0]).markdown);
+    } else if (action === "agent-chat") console.log(chat(settings, context()));
     else if (action === "market-check") {
       const result = await checkMarket(
         args[0] ? args[0].split(",") : settings.account.symbols,

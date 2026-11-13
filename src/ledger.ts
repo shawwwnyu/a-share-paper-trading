@@ -1,3 +1,4 @@
+import { portfolioRisk } from "./portfolio-risk.ts";
 import { checkEvidenceBuy } from "./evidence.ts";
 import { applyWatchlist, manualWatch } from "./watchlist.ts";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +10,7 @@ import type { Command, Point, Quote, State } from "./types.ts";
 
 export const emptyState = (): State => ({
   watchlist: [],
+  riskSnapshots: [],
   manualWatchlist: [],
   watchlistExclusions: [],
   watchlistHistory: [],
@@ -99,6 +101,34 @@ function apply(state: State, command: Command, now: string) {
   } else {
     requireThat(state.config, "请先初始化模拟账户");
     switch (command.type) {
+      case "risk-snapshot":
+        state.riskSnapshots.push(portfolioRisk(state, command.quotes, now));
+        break;
+      case "record-check": {
+        const check = command.check;
+        requireThat(
+          typeof check.reason === "string" && check.reason.trim().length > 0 && check.reason.length <= 4000,
+          "检查记录需要有效原因",
+        );
+        if (check.kind === "fill-blocked") requireThat(state.orders[check.signal], "检查记录的委托不存在");
+        else if (check.kind === "signal-blocked") {
+          symbolCode(check.symbol);
+          requireThat(
+            ["buy", "sell"].includes(check.side) && state.strategies[check.strategy],
+            "检查记录方向或策略无效",
+          );
+        } else
+          requireThat(check.kind === "data-failure" && ["history", "risk"].includes(check.scope), "检查记录种类无效");
+        break;
+      }
+      case "scan-observation":
+        requireThat(
+          command.scan.complete === false && timestamp(command.scan.at) <= timestamp(now),
+          "只记录已发生的不完整扫描",
+        );
+        integer(command.scan.universeSize, "扫描目录数量");
+        integer(command.scan.observed, "扫描覆盖数量");
+        break;
       case "watchlist": {
         const scan = command.scan;
         requireThat(
@@ -322,6 +352,9 @@ function apply(state: State, command: Command, now: string) {
   state.lastAt = now;
 }
 
+export type LedgerRecord = { id: string; at: string; command: Command; changes: Partial<State> };
+export type LedgerView = { state: State; records: LedgerRecord[] };
+
 // Store computed changes, including fills and fees, so replay never reruns today's market or strategy calculations.
 export class Ledger {
   readonly file: string;
@@ -338,6 +371,22 @@ export class Ledger {
     for (const row of this.db.prepare("SELECT changes FROM entries ORDER BY seq").iterate())
       Object.assign(state, JSON.parse(String(row.changes)));
     return state;
+  }
+  view(at: string): LedgerView {
+    const cutoff = timestamp(at);
+    const state = emptyState();
+    const records: LedgerRecord[] = [];
+    let recordedAt = "";
+    // One SQLite statement provides a consistent read; equal-time rows inherit the preceding recorded timestamp.
+    for (const row of this.db.prepare("SELECT id, request, changes FROM entries ORDER BY seq").iterate()) {
+      const changes = JSON.parse(String(row.changes)) as Partial<State>;
+      recordedAt = changes.lastAt ?? recordedAt;
+      requireThat(recordedAt, "账本记录缺少可恢复时间");
+      if (timestamp(recordedAt) > cutoff) break;
+      Object.assign(state, changes);
+      records.push({ id: String(row.id), at: recordedAt, command: JSON.parse(String(row.request)), changes });
+    }
+    return { state, records };
   }
   recorded(id: string) {
     return Boolean(this.db.prepare("SELECT 1 FROM entries WHERE id=?").get(id));

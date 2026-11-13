@@ -38,11 +38,12 @@ node src/cli.ts status account.json
 ```powershell
 node src/cli.ts status account.json
 node src/cli.ts quotes account.json
+node src/cli.ts daily-review account.json 2026-11-13
 node src/cli.ts history account.json private/history.json
 node src/cli.ts review account.json "2026-11-06T15:00:01+08:00" "2026-11-13T15:00:01+08:00"
 ```
 
-`status` 输出信号、决定、成交、持仓、估值和策略记录。周报自动保存在 `private/reports/`，同时提供 Markdown 和 JSON。
+`status` 输出信号、决定、成交、持仓、估值和策略记录。日报在收盘估值后自动生成，也可用 `daily-review` 从截止时点账本生成，保存于 `private/reports/daily/` 并保留历史版本；周报保存在 `private/reports/`，两者均提供 Markdown 和 JSON。筛选、信号、确认延迟、未成交与风险分开统计，入场和退出策略按既有 FIFO 事实归因；口径及覆盖边界见[每日复盘交付记录](docs/tasks/daily-review-result.md)。
 
 无需初始化账户即可检查行情，直接使用示例配置。可选的股票列表只影响本次检查，最后一个参数为请求的日线数量（默认 60，范围 1–640）。
 
@@ -180,6 +181,6 @@ npm run format:check
 
 运行 `node src/cli.ts scan-market account.json` 扫描沪深 A 股全市场。首次读取目录，之后当天复用完整目录；快照每次更新。完整扫描才把前 20 名观察候选写入自选账本，已有持仓不会因移出自选而消失。规则、依据和覆盖缺失见报告，不以入选代替买入确认。可选 `screeningEvidence` 配置导入已核实的行业、财务、公告、交易状态、上市日期和公司行为证据；新版本排除缺失或失效证据，支持人工观察、持续排除与进退原因。结构、时效、人工自选命令和未实测边界见[筛选证据交付记录](docs/tasks/screening-evidence-result.md)。不配置时仍为原基础观察规则，尚未核对这些完整证据；当前不自动同步财报或公告。
 
-Loop 私聊支持：`查看进度`、`扫描市场`、`查看自选`、`查看持仓`、`查看复盘`、`开发：具体需求`、`继续开发`。普通买卖文字不执行成交。
+Loop 私聊支持：`查看进度`、`扫描市场`、`查看自选`、`查看持仓`、`查看复盘`、`查看日报`、`开发：具体需求`、`继续开发`。普通买卖文字不执行成交。
 
 [持续开发路线](docs/roadmap.md)列明当前能力和后续任务；[实测记录](docs/monitor-result.md)区分真实扫描与固定数据验证。动态自选时间外比较工具已提供，支持封存当时股票池、证据并按相同成交约束比较基础与候选规则；使用 `node src/cli.ts validate-dynamic <模拟验证方案> <动态历史资料>`，不打开账户数据库，详见[动态验证记录](docs/tasks/dynamic-validation-result.md)。真实历史资料及筛选效果尚未验证，比较报告不直接授权启用策略。

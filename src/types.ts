@@ -154,7 +154,12 @@ export type WatchChange = {
   scan?: string;
   by?: string;
 };
+export type WorkflowCheck =
+  | { kind: "fill-blocked"; signal: string; reason: string }
+  | { kind: "signal-blocked"; symbol: string; side: "buy" | "sell"; strategy: string; reason: string }
+  | { kind: "data-failure"; scope: "history" | "risk"; reason: string };
 export type State = {
+  riskSnapshots: import("./portfolio-risk.ts").PortfolioRisk[];
   manualWatchlist: ManualWatch[];
   watchlistExclusions: ManualWatch[];
   watchlistHistory: WatchChange[];
@@ -180,6 +185,9 @@ export type State = {
   lastAt: string;
 };
 export type Command =
+  | { type: "record-check"; check: WorkflowCheck }
+  | { type: "risk-snapshot"; quotes: Quote[] }
+  | { type: "scan-observation"; scan: ScanReport }
   | { type: "watchlist"; scan: ScanReport }
   | { type: "manual-watch"; action: "add" | "remove"; symbol: string; name?: string; reason: string; by: string }
   | { type: "init"; config: AccountConfig; strategy: Strategy }

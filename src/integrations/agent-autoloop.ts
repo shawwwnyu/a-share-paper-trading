@@ -7,9 +7,11 @@ import { quotes, history, isTradingDay } from "../market.ts";
 import { closesAsOf, direction } from "../strategy.ts";
 import { expiryReason, liveOrder, orderedApprovals, orderPriority } from "../risk.ts";
 import { checkSignalQuote, riskSignal } from "../signals.ts";
+import { activityReview, renderActivityReview } from "../activity-review.ts";
+import { saveDailyReview } from "../daily-report.ts";
 import { review, renderReview } from "../review.ts";
 import { chinaDay, requireThat, timestamp } from "../types.ts";
-import type { Bar, Command, Dataset, Quote, State } from "../types.ts";
+import type { Bar, Command, Dataset, Quote, State, WorkflowCheck } from "../types.ts";
 import type { Settings } from "../config.ts";
 
 type Answer = {
@@ -127,6 +129,19 @@ function expireOrders(ledger: Ledger, now: string) {
   if (Object.values(state.orders).some((order) => expiryReason(order, state, now)))
     ledger.execute(`expire-${now}`, { type: "expire-orders" }, now);
 }
+function recordCheck(ledger: Ledger, check: WorkflowCheck, now: string) {
+  const command = { type: "record-check" as const, check: { ...check, reason: check.reason.slice(0, 4000) } };
+  const id = createHash("sha256").update(JSON.stringify({ now, command })).digest("hex").slice(0, 24);
+  ledger.execute(`check-${id}`, command, now);
+}
+function recordRisk(ledger: Ledger, quotes: Quote[], now: string) {
+  const state = ledger.state();
+  const id = createHash("sha256")
+    .update(JSON.stringify({ now, quotes, lots: state.lots, cash: state.cash, risk: state.config?.risk }))
+    .digest("hex")
+    .slice(0, 24);
+  ledger.execute(`risk-${id}`, { type: "risk-snapshot", quotes }, now);
+}
 export async function cycle(settings: Settings, context: Context, clock = () => new Date().toISOString()) {
   const ledger = new Ledger(settings.database);
   const problems: string[] = [];
@@ -156,6 +171,11 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           if (signal) ledger.execute(`signal-${signal.id}`, { type: "signal", signal }, evaluatedAt);
         } catch (error) {
           problems.push(`${q.symbol} ${(error as Error).message}`);
+          recordCheck(
+            ledger,
+            { kind: "data-failure", scope: "risk", reason: `${q.symbol} ${(error as Error).message}` },
+            clock(),
+          );
         }
       }
       for (const order of orderedApprovals(ledger.state(), checkedAt)) {
@@ -165,6 +185,7 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           ledger.execute(`fill-${order.id}`, { type: "fill", signal: order.id, quote: q, quotes: observed }, clock());
         } catch (error) {
           problems.push(`${order.symbol} ${(error as Error).message}`);
+          recordCheck(ledger, { kind: "fill-blocked", signal: order.id, reason: (error as Error).message }, clock());
         }
       }
       state = ledger.state();
@@ -174,6 +195,7 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           bars.push(...(await history(symbols.slice(start, start + 100))).bars);
       } catch (error) {
         problems.push(`历史行情读取失败，已保留风险退出建议：${(error as Error).message}`);
+        recordCheck(ledger, { kind: "data-failure", scope: "history", reason: (error as Error).message }, clock());
       }
       const active = state.strategies[state.active];
       for (const q of observed) {
@@ -199,7 +221,20 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           continue;
         const quantity =
           side === "sell" ? holding : buyQuantity(q.symbol, (state.cash * active.allocationBps) / 10000, q.price);
-        if (!quantity) continue;
+        if (!quantity) {
+          recordCheck(
+            ledger,
+            {
+              kind: "signal-blocked",
+              symbol: q.symbol,
+              side,
+              strategy: active.id,
+              reason: "可用预算或持仓不足最小申报数量",
+            },
+            created,
+          );
+          continue;
+        }
         try {
           checkSignalQuote(state, q, created);
           ledger.execute(
@@ -222,8 +257,14 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           );
         } catch (error) {
           problems.push((error as Error).message);
+          recordCheck(
+            ledger,
+            { kind: "signal-blocked", symbol: q.symbol, side, strategy: active.id, reason: (error as Error).message },
+            clock(),
+          );
         }
       }
+      recordRisk(ledger, observed, clock());
     }
     const finish = clock();
     expireOrders(ledger, finish);
@@ -259,7 +300,10 @@ export async function markAccount(settings: Settings, clock = () => new Date().t
     requireThat(state.config, "请先初始化模拟账户");
     const now = clock();
     const day = chinaDay(now);
-    if (ledger.recorded(`close-${day}`)) return "没事可做：今天的收盘估值已经记录";
+    if (ledger.recorded(`close-${day}`)) {
+      saveDailyReview(settings, day, now);
+      return "今天的收盘估值已记录，日报已从账本恢复";
+    }
     if (!(await isTradingDay(day))) return "没事可做：今天休市";
     const observed = await quotes(
       [...new Set(state.lots.map((lot) => lot.symbol))].length
@@ -268,7 +312,9 @@ export async function markAccount(settings: Settings, clock = () => new Date().t
     );
     // The close may be delivered a few seconds after 15:00. Store the actual quote time and record time separately.
     ledger.execute(`close-${day}`, { type: "mark", quotes: observed }, clock());
-    return `模拟账户估值完成，资产 ${(valueOf(ledger.state()).equity / 100).toFixed(2)} 元`;
+    recordRisk(ledger, observed, clock());
+    saveDailyReview(settings, day, clock());
+    return `模拟账户估值及每日复盘完成，资产 ${(valueOf(ledger.state()).equity / 100).toFixed(2)} 元`;
   } finally {
     ledger.close();
   }
@@ -282,7 +328,9 @@ export function weekly(settings: Settings, context: Context, now = new Date().to
     const to = trigger?.receivedAt ?? now;
     const from = new Date(timestamp(to) - 7 * 86400_000).toISOString();
     let state = ledger.state();
-    const result = review(state, from, to);
+    const view = ledger.view(to);
+    const result = review(view.state, from, to);
+    const workflow = activityReview(view, from, to);
     const proposal = suggestion(state, result, to);
     // Training includes this review; holdout data must start on a subsequent day.
     if (proposal?.type === "propose") ledger.execute(`suggest-${proposal.strategy.id}`, proposal, now);
@@ -295,11 +343,11 @@ export function weekly(settings: Settings, context: Context, now = new Date().to
         ledger.execute(`validate-${id}-${hash}`, { type: "validate", proposal: id, dataset: data }, now);
       }
     }
-    const report = renderReview(result);
+    const report = renderReview(result) + renderActivityReview(workflow);
     mkdirSync(settings.reports, { recursive: true });
     const file = join(settings.reports, `${chinaDay(to)}.md`);
     writeFileSync(file, report, { mode: 0o600 });
-    writeFileSync(file.replace(/\.md$/, ".json"), JSON.stringify(result, null, 2), { mode: 0o600 });
+    writeFileSync(file.replace(/\.md$/, ".json"), JSON.stringify({ ...result, workflow }, null, 2), { mode: 0o600 });
     return receipt("模拟交易周度复盘已生成", {
       notice: [
         {

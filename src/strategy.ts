@@ -80,6 +80,7 @@ export function backtest(strategy: Strategy, data: Dataset, config: AccountConfi
   const days = checkDataset(data, config.symbols);
   const state: State = {
     watchlist: [],
+    riskSnapshots: [],
     manualWatchlist: [],
     watchlistExclusions: [],
     watchlistHistory: [],

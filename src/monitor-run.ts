@@ -47,12 +47,15 @@ export async function runScan(settings: Settings, runKey?: string) {
     }
     let applied = false;
     let watchlistSize = 0;
-    if (report.complete && existsSync(settings.database)) {
+    if (existsSync(settings.database)) {
       const ledger = new Ledger(settings.database);
       try {
         if (ledger.state().config) {
-          ledger.execute(`scan-${report.id}`, { type: "watchlist", scan: report });
-          applied = true;
+          ledger.execute(`scan-${report.id}`, {
+            type: report.complete ? "watchlist" : "scan-observation",
+            scan: report,
+          });
+          applied = report.complete;
           watchlistSize = ledger.state().watchlist.length;
         }
       } finally {

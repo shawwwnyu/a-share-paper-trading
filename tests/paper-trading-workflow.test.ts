@@ -172,6 +172,7 @@ test("an answer after the market closes records expiry and allows the next sched
 test("restarting a committed closing valuation does not fetch a new quote or duplicate its entry", async (t) => {
   const settings = JSON.parse(readFileSync(join(recipe, "account.example.json"), "utf8"));
   settings.database = join(scratch, "close-replay.db");
+  settings.reports = join(scratch, "close-replay-reports");
   const ledger = new Ledger(settings.database);
   try {
     ledger.execute(

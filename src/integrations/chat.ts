@@ -5,7 +5,7 @@ import { Ledger } from "../ledger.ts";
 import type { Settings } from "../config.ts";
 
 const help =
-  "可以直接发送：\n查看进度\n扫描市场\n查看自选\n查看持仓\n查看复盘\n开发：具体需求\n继续开发\n买卖建议通过确认卡片处理。";
+  "可以直接发送：\n查看进度\n扫描市场\n查看自选\n查看持仓\n查看复盘\n查看日报\n开发：具体需求\n继续开发\n买卖建议通过确认卡片处理。";
 const read = (file: string) => JSON.parse(readFileSync(file, "utf8"));
 export function chat(settings: Settings, context: { events?: { id: string | number; detail?: string }[] }) {
   const notice: { key: string; title: string; text: string; fyi: true }[] = [];
@@ -64,6 +64,16 @@ export function chat(settings: Settings, context: { events?: { id: string | numb
         text = state?.config
           ? `模拟账户可用现金 ${(state.cash / 100).toFixed(2)} 元，累计成交 ${state.fills.length} 笔。\n${state.lots.length ? state.lots.map((l) => `${l.symbol} ${l.quantity} 股，买入日 ${l.day}`).join("\n") : "当前没有持仓。"}`
           : "模拟账户尚未初始化。";
+      } else if (/^(查看)?(日报|每日复盘)$/.test(words)) {
+        const folder = join(settings.reports, "daily");
+        const files = existsSync(folder)
+          ? readdirSync(folder)
+              .filter((file) => /^\d{4}-\d{2}-\d{2}\.md$/.test(file))
+              .sort()
+          : [];
+        text = files.length
+          ? readFileSync(join(folder, files.at(-1)!), "utf8").slice(0, 3500)
+          : "还没有每日复盘，收盘估值后将从账本生成；资料不足会明确标出。";
       } else if (/^(查看)?(复盘|周报)$/.test(words)) {
         const files = existsSync(settings.reports)
           ? readdirSync(settings.reports)
