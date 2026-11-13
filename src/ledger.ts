@@ -5,6 +5,7 @@ import { checkStrategy, chinaDay, integer, requireThat, symbolCode, timestamp } 
 import type { Command, Point, Quote, State } from "./types.ts";
 
 export const emptyState = (): State => ({
+  watchlist: [],
   corporateActions: [],
   config: null,
   active: "",
@@ -91,11 +92,45 @@ function apply(state: State, command: Command, now: string) {
   } else {
     requireThat(state.config, "请先初始化模拟账户");
     switch (command.type) {
+      case "watchlist": {
+        const scan = command.scan;
+        requireThat(
+          scan.complete && scan.observed === scan.universeSize && scan.failures.length === 0,
+          "扫描不完整，保留原自选",
+        );
+        requireThat(
+          timestamp(scan.at) <= timestamp(now) && chinaDay(scan.at) === chinaDay(now),
+          "扫描时间无效或不是今天",
+        );
+        requireThat(
+          scan.selected.length <= 20 && new Set(scan.selected.map((c) => c.symbol)).size === scan.selected.length,
+          "自选数量超限或重复",
+        );
+        for (const candidate of scan.selected) {
+          symbolCode(candidate.symbol);
+          requireThat(candidate.reasons.length > 0, "自选缺少入选依据");
+        }
+        state.watchlist = structuredClone(scan.selected);
+        state.watchlistScan = { id: scan.id, rule: scan.rule, at: scan.at, universeSize: scan.universeSize };
+        for (const order of Object.values(state.orders)) {
+          if (
+            order.side === "buy" &&
+            ["pending", "approved"].includes(order.status) &&
+            !scan.selected.some((c) => c.symbol === order.symbol)
+          )
+            order.status = "expired";
+        }
+        break;
+      }
       case "signal": {
         const s = command.signal;
         requireThat(/^[\w.-]{1,120}$/.test(s.id) && !state.orders[s.id], "信号编号无效或重复");
         requireThat(
-          state.config.symbols.includes(s.symbol) && s.strategy === state.active,
+          (state.watchlistScan
+            ? s.side === "sell"
+              ? state.lots.some((lot) => lot.symbol === s.symbol)
+              : state.watchlist.some((c) => c.symbol === s.symbol)
+            : state.config.symbols.includes(s.symbol)) && s.strategy === state.active,
           "信号不在自选股池或策略已经变化",
         );
         requireThat(s.side === "buy" || s.side === "sell", "买卖方向无效");

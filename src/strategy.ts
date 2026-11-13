@@ -75,6 +75,7 @@ export function backtest(strategy: Strategy, data: Dataset, config: AccountConfi
   checkStrategy(strategy);
   const days = checkDataset(data, config.symbols);
   const state: State = {
+    watchlist: [],
     corporateActions: [],
     config,
     active: strategy.id,

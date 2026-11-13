@@ -37,3 +37,5 @@ CI 使用固定的中台基线 c9ec4a187cab49627947e7e33db265ec143db3b8，升级
 
 中台仓库 https://github.com/shawwwnyu/agent-autoloop
 上游协议 https://github.com/KKKKhazix/agent-autoloop/blob/c9ec4a187cab49627947e7e33db265ec143db3b8/docs/protocol.md
+
+全市场扫描、Loop 私聊与定时运行见 [当前运行接入](../../docs/loop-setup.md)。旧 rules.json 是固定股池的最小示例；部署到本人的中台时用飞书替换 desktop，并加入扫描、私聊和开发规则。

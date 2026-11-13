@@ -1,3 +1,4 @@
+import type { Candidate, ScanReport } from "./monitor.ts";
 export type Strategy = { id: string; lookback: number; entryBps: number; exitBps: number; allocationBps: number };
 export type AccountConfig = {
   cash: number;
@@ -131,6 +132,8 @@ export type Proposal = {
   approvedAt?: string;
 };
 export type State = {
+  watchlist: Candidate[];
+  watchlistScan?: { id: string; rule: string; at: string; universeSize: number };
   corporateActions: { symbol: string; day: string; shareRatio: number; cashPerShare: number; reference: string }[];
   config: AccountConfig | null;
   active: string;
@@ -150,6 +153,7 @@ export type State = {
   lastAt: string;
 };
 export type Command =
+  | { type: "watchlist"; scan: ScanReport }
   | { type: "init"; config: AccountConfig; strategy: Strategy }
   | { type: "signal"; signal: Signal }
   | { type: "decide"; signal: string; approve: boolean; by: string; decidedAt?: string }

@@ -9,6 +9,8 @@ import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
 import { requireThat } from "./types.ts";
 import type { Command, Quote } from "./types.ts";
+import { runScan } from "./monitor-run.ts";
+import { chat } from "./integrations/chat.ts";
 
 const [action, file, ...args] = process.argv.slice(2);
 const read = (path: string) => JSON.parse(readFileSync(path, "utf8"));
@@ -86,7 +88,10 @@ try {
       requireThat(process.env.AGENT_AUTOLOOP_CONTEXT, "本命令由中台接单程序调用，需要轮次资料文件");
       return read(process.env.AGENT_AUTOLOOP_CONTEXT);
     };
-    if (action === "market-check") {
+    if (action === "scan-market" || action === "agent-scan")
+      console.log(await runScan(settings, process.env.AGENT_AUTOLOOP_RUN));
+    else if (action === "agent-chat") console.log(chat(settings, context()));
+    else if (action === "market-check") {
       const result = await checkMarket(
         args[0] ? args[0].split(",") : settings.account.symbols,
         settings.account.maxQuoteAgeSeconds,

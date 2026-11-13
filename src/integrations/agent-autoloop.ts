@@ -42,6 +42,10 @@ export function handleAnswers(ledger: Ledger, context: Context, now: string) {
       answer.title === tradeTitle(trade[1]) &&
       JSON.stringify(answer.options) === JSON.stringify(TRADE_OPTIONS)
     ) {
+      if (state.orders[trade[1]].status !== "pending") {
+        messages.push("这笔建议已处理或已过期，保留原记录");
+        continue;
+      }
       ledger.execute(
         `answer-${answer.card}`,
         { type: "decide", signal: trade[1], approve: answer.choice === 0, by: answer.by, decidedAt: answer.at },
@@ -126,7 +130,13 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
     requireThat(state.config, "请先初始化模拟账户");
     const day = chinaDay(now);
     if (tradingTime(now) && (await isTradingDay(day))) {
-      const observed = await quotes(state.config.symbols);
+      const symbols = [
+        ...new Set([
+          ...(state.watchlistScan ? state.watchlist.map((c) => c.symbol) : state.config.symbols),
+          ...state.lots.map((lot) => lot.symbol),
+        ]),
+      ];
+      const observed = symbols.length ? await quotes(symbols) : [];
       const checkedAt = clock();
       for (const order of Object.values(state.orders)) {
         if (order.status !== "approved" || timestamp(order.expiresAt) <= timestamp(checkedAt)) continue;
@@ -141,7 +151,7 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
         }
       }
       state = ledger.state();
-      const data = await history(state.config!.symbols);
+      const data = symbols.length ? await history(symbols) : { bars: [] };
       const active = state.strategies[state.active];
       for (const q of observed) {
         const past = data.bars
@@ -187,12 +197,19 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
         Object.values(state.orders).some(
           (order) =>
             card.title === tradeTitle(order.id) &&
-            (timestamp(order.expiresAt) <= timestamp(finish) || order.strategy !== state.active),
+            (order.status === "expired" ||
+              timestamp(order.expiresAt) <= timestamp(finish) ||
+              order.strategy !== state.active),
         ),
       )
       .map((card) => ({ card: card.card, reason: "信号已经过期或策略版本已变，请以新建议为准" }));
     return receipt(problems.length ? `已检查模拟交易，${problems.join("；")}` : "模拟交易检查完成", {
-      ask: pendingCards(state, finish).filter((card) => card.about.startsWith("paper-trade:")),
+      ask: pendingCards(state, finish)
+        .filter(
+          (card) =>
+            card.about.startsWith("paper-trade:") && !(context.open ?? []).some((open) => open.title === card.title),
+        )
+        .slice(0, 5),
       resolve: resolveCards,
     });
   } finally {
