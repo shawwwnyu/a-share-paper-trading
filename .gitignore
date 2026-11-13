@@ -1,0 +1,9 @@
+node_modules/
+private/
+account.json
+*.db
+*.db-shm
+*.db-wal
+*.log
+.integration/
+.DS_Store

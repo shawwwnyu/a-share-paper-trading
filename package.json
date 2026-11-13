@@ -1,0 +1,29 @@
+{
+  "name": "a-share-paper-trading",
+  "description": "A 股模拟交易、成交账本、每周复盘和人工审批的策略迭代。",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shawwwnyu/a-share-paper-trading.git"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
+    "test:integration": "node --disable-warning=ExperimentalWarning --test integration-tests/*.test.ts",
+    "typecheck": "tsc -p .",
+    "format": "prettier --write \"**/*.{ts,json,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,yml}\""
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  },
+  "prettier": {
+    "printWidth": 120
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "timezone": "Asia/Shanghai",
+  "askFirst": ["模拟交易确认", "启用候选策略"],
+  "sources": {},
+  "agents": {
+    "paper-cycle": {
+      "name": "模拟交易执行器",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/src/cli.ts", "agent-cycle", "{cwd}/account.json"]
+    },
+    "paper-mark": {
+      "name": "模拟账户估值",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/src/cli.ts", "agent-mark", "{cwd}/account.json"]
+    },
+    "paper-review": {
+      "name": "模拟交易周度复盘",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/src/cli.ts", "agent-review", "{cwd}/account.json"]
+    }
+  },
+  "rules": [
+    {
+      "name": "模拟交易确认与撮合",
+      "when": { "cron": "*/5 9-14 * * 1-5" },
+      "to": "paper-cycle",
+      "cwd": "~/code/a-share-paper-trading",
+      "group": "paper-account",
+      "channels": ["desktop"]
+    },
+    {
+      "name": "模拟账户收盘估值",
+      "when": { "cron": "0 15 * * 1-5" },
+      "to": "paper-mark",
+      "cwd": "~/code/a-share-paper-trading",
+      "group": "paper-account",
+      "channels": ["desktop"]
+    },
+    {
+      "name": "模拟交易每周复盘",
+      "when": { "cron": "0 18 * * 0" },
+      "to": "paper-review",
+      "cwd": "~/code/a-share-paper-trading",
+      "group": "paper-account",
+      "channels": ["desktop"]
+    }
+  ],
+  "channels": { "desktop": { "name": "桌面通知", "links": true } }
+}

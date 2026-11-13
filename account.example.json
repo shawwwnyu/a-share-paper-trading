@@ -1,0 +1,15 @@
+{
+  "database": "private/paper.db",
+  "reports": "private/reports",
+  "account": {
+    "cash": 10000000,
+    "commissionBps": 3,
+    "minimumCommission": 500,
+    "sellTaxBps": 5,
+    "transferBps": 0.1,
+    "slippageBps": 10,
+    "maxQuoteAgeSeconds": 60,
+    "symbols": ["sh600000", "sz000001"]
+  },
+  "strategy": { "id": "initial-v1", "lookback": 20, "entryBps": 100, "exitBps": 100, "allocationBps": 2000 }
+}
