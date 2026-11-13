@@ -9,6 +9,7 @@ import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
 import { requireThat } from "./types.ts";
 import type { Command, Quote } from "./types.ts";
+import { startWorkbench } from "./workbench.ts";
 import { saveDailyReview } from "./daily-report.ts";
 import { validateDynamic } from "./dynamic-validation.ts";
 import { runScan } from "./monitor-run.ts";
@@ -97,7 +98,18 @@ try {
     };
     if (action === "scan-market" || action === "agent-scan")
       console.log(await runScan(settings, process.env.AGENT_AUTOLOOP_RUN));
-    else if (action === "daily-review") {
+    else if (action === "workbench") {
+      const server = await startWorkbench(settings, { port: args[0] === undefined ? 8787 : Number(args[0]) });
+      const address = server.address();
+      if (address && typeof address !== "string")
+        console.log(`只读交易员工作台：http://127.0.0.1:${address.port}\n刷新只读取账本；交易决定请在原飞书卡片处理。`);
+      const stop = () => {
+        server.closeAllConnections();
+        server.close();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    } else if (action === "daily-review") {
       requireThat(args[0], "请指定日报日期，例如 2026-11-13");
       console.log(saveDailyReview(settings, args[0]).markdown);
     } else if (action === "agent-chat") console.log(chat(settings, context()));

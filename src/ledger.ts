@@ -359,12 +359,15 @@ export type LedgerView = { state: State; records: LedgerRecord[] };
 export class Ledger {
   readonly file: string;
   private db: DatabaseSync;
-  constructor(file: string) {
+  private readOnly: boolean;
+  constructor(file: string, options: { readOnly?: boolean } = {}) {
     this.file = file;
-    this.db = new DatabaseSync(file);
-    this.db.exec(
-      "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, request TEXT NOT NULL, changes TEXT NOT NULL)",
-    );
+    this.readOnly = options.readOnly === true;
+    this.db = new DatabaseSync(file, { readOnly: this.readOnly });
+    if (!this.readOnly)
+      this.db.exec(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, request TEXT NOT NULL, changes TEXT NOT NULL)",
+      );
   }
   state(): State {
     const state = emptyState();
@@ -392,6 +395,7 @@ export class Ledger {
     return Boolean(this.db.prepare("SELECT 1 FROM entries WHERE id=?").get(id));
   }
   execute(id: string, command: Command, now = new Date().toISOString()) {
+    requireThat(!this.readOnly, "只读账本不接受写入操作");
     requireThat(typeof id === "string" && id.length > 0 && id.length <= 200, "操作编号无效");
     const request = canonical(command);
     this.db.exec("BEGIN IMMEDIATE");

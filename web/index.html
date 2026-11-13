@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A 股模拟交易的市场观察、委托、持仓与复盘工作台。" />
+    <title>交易员工作台 · A 股模拟交易</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到工作台内容</a>
+    <aside class="sidebar" aria-label="工作台导航">
+      <a class="brand" href="#overview"
+        ><span class="brand-mark" aria-hidden="true">A</span><span>交易员工作台<small>A 股 · 模拟账户</small></span></a
+      >
+      <div class="nav-label">工作空间</div>
+      <nav>
+        <a href="#overview"><span aria-hidden="true">01</span>今日总览</a>
+        <a href="#market"><span aria-hidden="true">02</span>市场与候选</a>
+        <a href="#watchlist"><span aria-hidden="true">03</span>自选观察</a>
+        <a href="#orders"><span aria-hidden="true">04</span>待确认与委托</a>
+        <a href="#holdings"><span aria-hidden="true">05</span>持仓与风险</a>
+        <a href="#reviews"><span aria-hidden="true">06</span>每日与每周复盘</a>
+      </nav>
+      <div class="sidebar-note">
+        <span class="status-dot" aria-hidden="true"></span>只读工作台
+        <p>观察有依据，成交有记录。<br />每个交易决定由本人确认。</p>
+      </div>
+    </aside>
+    <main id="main" tabindex="-1">
+      <header class="topbar"><span>沪深 A 股 / 模拟交易</span><span class="pill">事实账本 · 本机访问</span></header>
+      <section id="overview" class="section">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PORTFOLIO / 工作台</p>
+            <h1>把每个决定，看清楚。</h1>
+            <p class="muted">从市场观察，到本人确认，再到持仓与复盘。</p>
+          </div>
+          <div class="refresh-box">
+            <button id="refresh" type="button" class="primary">刷新记录 <span aria-hidden="true">↻</span></button>
+            <p id="updated" class="small muted">等待读取账本</p>
+          </div>
+        </div>
+        <div id="connection" class="connection" role="status" aria-live="polite">正在连接本机业务接口…</div>
+        <div id="warnings" aria-live="polite"></div>
+        <div class="metrics">
+          <article class="metric">
+            <p>最近记录的总资产 <span>元</span></p>
+            <strong id="equity">—</strong><small id="valuation-at">尚无估值记录</small>
+          </article>
+          <article class="metric">
+            <p>可用模拟现金 <span>元</span></p>
+            <strong id="cash">—</strong><small>来自当前账本余额</small>
+          </article>
+          <article class="metric">
+            <p>累计盈亏 <span>元</span></p>
+            <strong id="pnl">—</strong><small>截至最近估值，已扣净入金</small>
+          </article>
+          <article class="metric">
+            <p>待本人确认 <span>笔</span></p>
+            <strong id="pending">—</strong><small id="approved">确认和成交分别记录</small>
+          </article>
+        </div>
+        <div class="overview-grid">
+          <article class="panel chart-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">净值轨迹</p>
+                <h2>账户走过的每一步</h2>
+              </div>
+              <label class="compact-label"
+                >区间<select id="chart-range">
+                  <option value="7">最近 7 日</option>
+                  <option value="30" selected>最近 30 日</option>
+                  <option value="0">全部已展示记录</option>
+                </select></label
+              >
+            </div>
+            <div id="chart" class="chart" aria-live="polite"><p class="empty">尚无净值记录</p></div>
+            <p class="panel-foot">仅展示最近 365 个已记录估值点；未采样的盘中波动可能更大。</p>
+          </article>
+          <article class="panel coverage-panel">
+            <p class="eyebrow">市场覆盖</p>
+            <h2 id="coverage-title">等待市场记录</h2>
+            <p class="coverage-number"><strong id="observed">—</strong><span id="universe"> / — 只</span></p>
+            <progress id="coverage" max="100" value="0" aria-label="市场行情读取覆盖率"></progress>
+            <p id="coverage-note" class="muted">未读取到扫描记录</p>
+            <dl class="facts">
+              <div>
+                <dt>最近扫描</dt>
+                <dd id="scan-at">未记录</dd>
+              </div>
+              <div>
+                <dt>当前持仓</dt>
+                <dd id="position-count">—</dd>
+              </div>
+              <div>
+                <dt>当前策略</dt>
+                <dd id="strategy">未登记</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+      </section>
+      <section id="market" class="section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">01 / 市场观察</p>
+            <h2>候选背后的依据</h2>
+            <p class="muted">筛选规则通过，只代表值得观察。尚未证明有超额收益。</p>
+          </div>
+          <label class="search-label"
+            >搜索候选<input id="candidate-search" type="search" placeholder="股票代码或名称" autocomplete="off"
+          /></label>
+        </div>
+        <div class="panel">
+          <div class="table-tools">
+            <span id="candidate-count">等待候选记录</span><span class="small muted">最多展示前 100 名合格候选</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">
+                观察候选与证据状态
+              </caption>
+              <thead>
+                <tr>
+                  <th>股票</th>
+                  <th class="right">记录价格 / 元</th>
+                  <th class="right">观察评分</th>
+                  <th>证据状态</th>
+                  <th>行情时间</th>
+                  <th>入选依据</th>
+                </tr>
+              </thead>
+              <tbody id="candidate-rows"></tbody>
+            </table>
+          </div>
+          <p id="candidate-empty" class="empty">尚无合格候选。缺失数据不会当作利好。</p>
+        </div>
+      </section>
+      <section id="watchlist" class="section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">02 / 自选观察</p>
+            <h2>持续跟踪，保留进退理由</h2>
+            <p class="muted">人工仅观察、合格自选和本人排除分别保留，移出自选不会删除持仓。</p>
+          </div>
+          <span id="watch-count" class="pill">0 只自选</span>
+        </div>
+        <div id="watch-cards" class="watch-grid"></div>
+        <div class="split-grid">
+          <article class="panel">
+            <h3>人工仅观察</h3>
+            <div id="manual-list"></div>
+          </article>
+          <article class="panel">
+            <h3>本人排除</h3>
+            <div id="excluded-list"></div>
+          </article>
+        </div>
+      </section>
+      <section id="orders" class="section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">03 / 决定与执行</p>
+            <h2>确认之后，仍要等待成交条件</h2>
+            <p class="muted">请在原飞书卡片处理交易决定；本页刷新只读取记录。</p>
+          </div>
+          <label class="compact-label"
+            >委托状态<select id="order-status">
+              <option value="all">全部</option>
+              <option value="pending">待本人确认</option>
+              <option value="approved">已确认待成交</option>
+              <option value="filled">已成交</option>
+              <option value="expired">已到期或策略已变</option>
+              <option value="rejected">本人拒绝</option>
+            </select></label
+          >
+        </div>
+        <div class="panel">
+          <div class="table-tools">
+            <span id="order-count">尚无委托记录</span><span class="small muted">最近 200 条及全部未结束委托</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">
+                信号与委托，点击详情可查看决定与结束原因
+              </caption>
+              <thead>
+                <tr>
+                  <th>股票 / 方向</th>
+                  <th class="right">数量</th>
+                  <th class="right">信号价 / 元</th>
+                  <th>当前状态</th>
+                  <th>策略</th>
+                  <th>有效至</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody id="order-rows"></tbody>
+            </table>
+          </div>
+          <p id="order-empty" class="empty">当前筛选下没有委托。</p>
+        </div>
+      </section>
+      <section id="holdings" class="section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">04 / 实际持仓</p>
+            <h2>每一份敞口，都来自实际成交</h2>
+            <p id="risk-coverage" class="muted">缺少有效行情时，市值及仓位比例显示未知。</p>
+          </div>
+          <span class="pill">保留 T+1 检查</span>
+        </div>
+        <div id="risk-alerts"></div>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">
+                实际持仓、可卖数量和风险估值
+              </caption>
+              <thead>
+                <tr>
+                  <th>股票 / 行业</th>
+                  <th class="right">持仓</th>
+                  <th class="right">当日可卖</th>
+                  <th class="right">含费成本 / 元</th>
+                  <th class="right">有效市值 / 元</th>
+                  <th class="right">实际仓位</th>
+                  <th>估值行情时间</th>
+                </tr>
+              </thead>
+              <tbody id="holding-rows"></tbody>
+            </table>
+          </div>
+          <p id="holding-empty" class="empty">当前没有实际持仓。</p>
+        </div>
+        <details class="panel fills-panel">
+          <summary>最近成交与费用明细 <span id="fill-count" class="small muted"></span></summary>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">
+                最近一百笔实际模拟成交
+              </caption>
+              <thead>
+                <tr>
+                  <th>成交时间</th>
+                  <th>股票 / 方向</th>
+                  <th class="right">数量</th>
+                  <th class="right">成交价 / 元</th>
+                  <th class="right">费用 / 元</th>
+                  <th>策略</th>
+                  <th>详情</th>
+                </tr>
+              </thead>
+              <tbody id="fill-rows"></tbody>
+            </table>
+          </div>
+          <p id="fill-empty" class="empty">没有已记录成交。</p>
+        </details>
+      </section>
+      <section id="reviews" class="section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">05 / 回看与归因</p>
+            <h2>复盘可以得出的结论，是保持不变</h2>
+            <p class="muted">区分筛选、信号、确认延迟、未成交及持仓风险，策略变化先验证再批准。</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="report-tools">
+            <label
+              >报告类型<select id="report-kind">
+                <option value="daily">每日复盘</option>
+                <option value="weekly">每周复盘</option>
+              </select></label
+            ><label>日期<select id="report-day" aria-label="复盘日期"></select></label
+            ><button id="report-load" type="button" class="secondary">读取复盘</button>
+          </div>
+          <div id="report-status" role="status" aria-live="polite"></div>
+          <div id="report-content"><p class="empty">还没有保存的复盘。收盘后可从账本生成日报。</p></div>
+        </div>
+      </section>
+      <footer>
+        <p>A 股模拟交易 · 事实账本</p>
+        <p>工作台仅读取已记录资料。刷新页面不会抓取新行情、确认交易或启用策略。</p>
+      </footer>
+    </main>
+    <dialog id="detail-dialog" aria-labelledby="detail-title">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">记录详情</p>
+          <h2 id="detail-title"></h2>
+        </div>
+        <button id="detail-close" type="button" class="icon-button" aria-label="关闭详情">×</button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+    <noscript
+      ><p class="no-script">请在浏览器启用 JavaScript 以读取本机业务记录。账户不会因页面加载发生变化。</p></noscript
+    >
+  </body>
+</html>
