@@ -190,7 +190,8 @@ test("the localhost server serves its business API, denies writes, traversal and
     assert.equal(home.status, 200);
     assert.match(await home.text(), /交易员工作台/);
     assert.match(home.headers.get("content-security-policy")!, /script-src 'self'/);
-    for (const asset of ["/app.js", "/model.js", "/style.css"]) assert.equal((await fetch(base + asset)).status, 200);
+    for (const asset of ["/app.js", "/model.js", "/data.js", "/style.css"])
+      assert.equal((await fetch(base + asset)).status, 200);
     const head = await fetch(base + "/api/workbench", { method: "HEAD" });
     assert.equal(head.status, 200);
     assert.equal(await head.text(), "");

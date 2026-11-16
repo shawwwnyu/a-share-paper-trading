@@ -412,6 +412,7 @@ export async function startWorkbench(
     "/": ["index.html", "text/html"],
     "/app.js": ["app.js", "text/javascript"],
     "/model.js": ["model.js", "text/javascript"],
+    "/data.js": ["data.js", "text/javascript"],
     "/style.css": ["style.css", "text/css"],
   };
   const server = createServer((req, res) => {

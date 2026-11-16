@@ -1,4 +1,5 @@
 import { money, percent, filterOrders, filterCandidates, navSeries, dateTime, labels } from "./model.js";
+import { isStaticDemo, readSnapshot, readReport } from "./data.js";
 
 const $ = (id) => document.getElementById(id);
 let snapshot = null;
@@ -349,9 +350,7 @@ async function loadReport() {
   $("report-load").disabled = true;
   show("report-status", "正在读取已保存复盘…");
   try {
-    const response = await fetch(`/api/reports/${kind}/${encodeURIComponent(day)}`, { cache: "no-store" });
-    if (!response.ok) throw new Error("这份复盘暂不可读，请核对保存的报告；此前成功读取的内容仍保留。");
-    const report = await response.json();
+    const report = await readReport(kind, day);
     if (sequence !== reportSequence) return;
     const body = node("div", "", "report-content"),
       heading = node("div", "", "report-title");
@@ -451,7 +450,7 @@ function renderSnapshot() {
   show("pending", snapshot.account.initialized ? snapshot.summary.pending : "—");
   show("approved", `另有 ${snapshot.summary.approved} 笔已确认待成交`);
   show("strategy", snapshot.account.activeStrategy || "尚未登记");
-  show("updated", `读取于 ${dateTime(snapshot.at)}`);
+  show("updated", `${isStaticDemo ? "演示时点" : "读取于"} ${dateTime(snapshot.at)}`);
   $("warnings").replaceChildren();
   for (const warning of snapshot.warnings) notice($("warnings"), warning);
   if (snapshot.demo) notice($("warnings"), "合成演示资料 · 用于核对工作台交互，不代表真实市场或账户收益。");
@@ -486,14 +485,17 @@ async function refresh() {
   if (busy) return;
   busy = true;
   $("refresh").disabled = true;
-  show("connection", "正在读取本机账本与报告…");
+  show("connection", isStaticDemo ? "正在读取内置合成演示资料…" : "正在读取本机账本与报告…");
   $("connection").classList.remove("error");
   try {
-    const response = await fetch("/api/workbench", { cache: "no-store" });
-    if (!response.ok) throw new Error("读取暂时失败。请核对本机服务与账户资料；页面保留上次成功内容。");
-    snapshot = await response.json();
+    snapshot = await readSnapshot();
     renderSnapshot();
-    show("connection", `账本记录截至 ${dateTime(snapshot.ledgerAt)}。刷新仅读取，不代表抓取了新行情。`);
+    show(
+      "connection",
+      isStaticDemo
+        ? `合成演示资料 · 固定时点 ${dateTime(snapshot.at)}。刷新仅重载演示，未连接账户或实时行情。`
+        : `账本记录截至 ${dateTime(snapshot.ledgerAt)}。刷新仅读取，不代表抓取了新行情。`,
+    );
     await loadReport();
   } catch (error) {
     show("connection", error.message || "无法连接本机工作台，保留上次成功内容。");
