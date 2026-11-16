@@ -252,7 +252,14 @@ test("report routes return allowlisted business fields and reject symlinked priv
     writeFileSync(file, JSON.stringify(report));
     const partial = await (await fetch(base + "/api/reports/daily/2026-11-13")).json();
     assert.equal(partial.workflow.unfilled.pending, null);
-    symlinkSync(file, join(env.settings.reports, "daily", "2026-11-12.json"));
+    const link = join(env.settings.reports, "daily", "2026-11-12.json");
+    try {
+      symlinkSync(file, link);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+      // Unprivileged Windows disallows file symlinks; a junction exercises the same reparse-point rejection.
+      symlinkSync(env.folder, link, "junction");
+    }
     assert.equal((await fetch(base + "/api/reports/daily/2026-11-12")).status, 404);
     const snapshot = await (await fetch(base + "/api/workbench")).json();
     assert.equal(snapshot.reports.daily.length, 1);
