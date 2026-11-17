@@ -3,11 +3,18 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ledger } from "./ledger.ts";
 import { history, quotes } from "./market.ts";
+import { checkMarket } from "./market-check.ts";
 import { loadSettings } from "./config.ts";
 import { cycle, markAccount, weekly } from "./integrations/agent-autoloop.ts";
 import { review, renderReview } from "./review.ts";
 import { requireThat } from "./types.ts";
 import type { Command, Quote } from "./types.ts";
+import { startWorkbench } from "./workbench.ts";
+import { saveDailyReview } from "./daily-report.ts";
+import { validateDynamic } from "./dynamic-validation.ts";
+import { runScan } from "./monitor-run.ts";
+import { runAgentChat } from "./integrations/chat.ts";
+import { runFeishuInbox } from "./integrations/feishu-inbox.ts";
 
 const [action, file, ...args] = process.argv.slice(2);
 const read = (path: string) => JSON.parse(readFileSync(path, "utf8"));
@@ -76,16 +83,59 @@ function demo(file: string) {
 try {
   requireThat(
     file,
-    "用法 node src/cli.ts <init|status|apply|quotes|history|review|agent-cycle|agent-mark|agent-review|demo> <配置文件或演示数据库> [参数]",
+    "用法 node src/cli.ts <init|status|apply|quotes|history|market-check|review|agent-cycle|agent-mark|agent-review|demo> <配置文件或演示数据库> [参数]",
   );
-  if (action === "demo") demo(resolve(file));
+  if (action === "validate-dynamic") {
+    requireThat(args[0], "用法 node src/cli.ts validate-dynamic <模拟验证方案> <动态历史资料>");
+    const report = validateDynamic(read(file), read(args[0]));
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.valid) process.exitCode = 1;
+  } else if (action === "demo") demo(resolve(file));
   else {
     const settings = loadSettings(file);
     const context = () => {
       requireThat(process.env.AGENT_AUTOLOOP_CONTEXT, "本命令由中台接单程序调用，需要轮次资料文件");
       return read(process.env.AGENT_AUTOLOOP_CONTEXT);
     };
-    if (action === "agent-cycle") console.log(await cycle(settings, context()));
+    if (action === "scan-market" || action === "agent-scan")
+      console.log(await runScan(settings, process.env.AGENT_AUTOLOOP_RUN));
+    else if (action === "workbench") {
+      const server = await startWorkbench(settings, { port: args[0] === undefined ? 8787 : Number(args[0]) });
+      const address = server.address();
+      if (address && typeof address !== "string")
+        console.log(`只读交易员工作台：http://127.0.0.1:${address.port}\n刷新只读取账本；交易决定请在原飞书卡片处理。`);
+      const stop = () => {
+        server.closeAllConnections();
+        server.close();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    } else if (action === "daily-review") {
+      requireThat(args[0], "请指定日报日期，例如 2026-11-13");
+      console.log(saveDailyReview(settings, args[0]).markdown);
+    } else if (action === "agent-chat") console.log(await runAgentChat(settings, context()));
+    else if (action === "feishu-inbox") {
+      requireThat(
+        args[0] && args[1] && process.env.PAPER_FEISHU_SOURCE_KEY,
+        "用法 PAPER_FEISHU_SOURCE_KEY=... node src/cli.ts feishu-inbox <配置文件> <本人open_id> <中台URL> [lark-cli路径]",
+      );
+      await runFeishuInbox({
+        owner: args[0],
+        hubUrl: args[1],
+        sourceKey: process.env.PAPER_FEISHU_SOURCE_KEY,
+        larkProgram: args[2],
+      });
+    } else if (action === "market-check") {
+      const result = await checkMarket(
+        args[0] ? args[0].split(",") : settings.account.symbols,
+        settings.account.maxQuoteAgeSeconds,
+        args[1] === undefined ? 60 : Number(args[1]),
+        undefined,
+        settings.account.slippageBps,
+      );
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.readSucceeded) process.exitCode = 1;
+    } else if (action === "agent-cycle") console.log(await cycle(settings, context()));
     else if (action === "agent-mark") console.log(await markAccount(settings));
     else if (action === "agent-review") console.log(weekly(settings, context()));
     else if (action === "quotes") console.log(JSON.stringify(await quotes(settings.account.symbols), null, 2));

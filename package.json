@@ -12,11 +12,12 @@
     "url": "git+https://github.com/shawwwnyu/a-share-paper-trading.git"
   },
   "scripts": {
-    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts tests/*.test.js",
     "test:integration": "node --disable-warning=ExperimentalWarning --test integration-tests/*.test.ts",
-    "typecheck": "tsc -p .",
-    "format": "prettier --write \"**/*.{ts,json,yml}\"",
-    "format:check": "prettier --check \"**/*.{ts,json,yml}\""
+    "typecheck": "tsc -p . && node --check web/app.js && node --check web/model.js && node --check web/data.js",
+    "demo:export": "node --disable-warning=ExperimentalWarning scripts/export-workbench-demo.ts",
+    "format": "prettier --write \"**/*.{ts,js,css,html,json,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,css,html,json,yml}\""
   },
   "devDependencies": {
     "@types/node": "26.6.4",

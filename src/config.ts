@@ -9,6 +9,7 @@ export type Settings = {
   account: AccountConfig;
   strategy: Strategy;
   validationData?: string;
+  screeningEvidence?: string;
 };
 export function loadSettings(file: string): Settings {
   const settings = JSON.parse(readFileSync(file, "utf8")) as Settings;
@@ -21,6 +22,7 @@ export function loadSettings(file: string): Settings {
     ...settings,
     database: resolve(base, settings.database),
     reports: resolve(base, settings.reports),
+    ...(settings.screeningEvidence && { screeningEvidence: resolve(base, settings.screeningEvidence) }),
     ...(settings.validationData && { validationData: resolve(base, settings.validationData) }),
   };
 }

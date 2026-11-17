@@ -1,10 +1,19 @@
+import { portfolioRisk } from "./portfolio-risk.ts";
+import { checkEvidenceBuy } from "./evidence.ts";
+import { applyWatchlist, manualWatch } from "./watchlist.ts";
 import { DatabaseSync } from "node:sqlite";
 import { checkQuote, checkQuantity, makeFill, bookFill } from "./execution.ts";
 import { validateCandidate } from "./strategy.ts";
+import { checkBuyRisk, checkRiskPolicy, expiryReason, liveOrder } from "./risk.ts";
 import { checkStrategy, chinaDay, integer, requireThat, symbolCode, timestamp } from "./types.ts";
 import type { Command, Point, Quote, State } from "./types.ts";
 
 export const emptyState = (): State => ({
+  watchlist: [],
+  riskSnapshots: [],
+  manualWatchlist: [],
+  watchlistExclusions: [],
+  watchlistHistory: [],
   corporateActions: [],
   config: null,
   active: "",
@@ -82,6 +91,7 @@ function apply(state: State, command: Command, now: string) {
       "自选股池或行情有效期无效",
     );
     c.symbols.forEach(symbolCode);
+    if (c.risk !== undefined) checkRiskPolicy(c.risk);
     checkStrategy(command.strategy);
     state.config = structuredClone(c);
     state.strategies[command.strategy.id] = structuredClone(command.strategy);
@@ -91,11 +101,67 @@ function apply(state: State, command: Command, now: string) {
   } else {
     requireThat(state.config, "请先初始化模拟账户");
     switch (command.type) {
+      case "risk-snapshot":
+        state.riskSnapshots.push(portfolioRisk(state, command.quotes, now));
+        break;
+      case "record-check": {
+        const check = command.check;
+        requireThat(
+          typeof check.reason === "string" && check.reason.trim().length > 0 && check.reason.length <= 4000,
+          "检查记录需要有效原因",
+        );
+        if (check.kind === "fill-blocked") requireThat(state.orders[check.signal], "检查记录的委托不存在");
+        else if (check.kind === "signal-blocked") {
+          symbolCode(check.symbol);
+          requireThat(
+            ["buy", "sell"].includes(check.side) && state.strategies[check.strategy],
+            "检查记录方向或策略无效",
+          );
+        } else
+          requireThat(check.kind === "data-failure" && ["history", "risk"].includes(check.scope), "检查记录种类无效");
+        break;
+      }
+      case "scan-observation":
+        requireThat(
+          command.scan.complete === false && timestamp(command.scan.at) <= timestamp(now),
+          "只记录已发生的不完整扫描",
+        );
+        integer(command.scan.universeSize, "扫描目录数量");
+        integer(command.scan.observed, "扫描覆盖数量");
+        break;
+      case "watchlist": {
+        const scan = command.scan;
+        requireThat(
+          scan.complete && scan.observed === scan.universeSize && scan.failures.length === 0,
+          "扫描不完整，保留原自选",
+        );
+        requireThat(
+          timestamp(scan.at) <= timestamp(now) && chinaDay(scan.at) === chinaDay(now),
+          "扫描时间无效或不是今天",
+        );
+        requireThat(
+          scan.selected.length <= 20 && new Set(scan.selected.map((c) => c.symbol)).size === scan.selected.length,
+          "自选数量超限或重复",
+        );
+        for (const candidate of scan.selected) {
+          symbolCode(candidate.symbol);
+          requireThat(candidate.reasons.length > 0, "自选缺少入选依据");
+        }
+        applyWatchlist(state, scan, now);
+        break;
+      }
+      case "manual-watch":
+        manualWatch(state, command, now);
+        break;
       case "signal": {
         const s = command.signal;
         requireThat(/^[\w.-]{1,120}$/.test(s.id) && !state.orders[s.id], "信号编号无效或重复");
         requireThat(
-          state.config.symbols.includes(s.symbol) && s.strategy === state.active,
+          (state.watchlistScan
+            ? s.side === "sell"
+              ? state.lots.some((lot) => lot.symbol === s.symbol)
+              : state.watchlist.some((c) => c.symbol === s.symbol)
+            : state.config.symbols.includes(s.symbol)) && s.strategy === state.active,
           "信号不在自选股池或策略已经变化",
         );
         requireThat(s.side === "buy" || s.side === "sell", "买卖方向无效");
@@ -106,7 +172,28 @@ function apply(state: State, command: Command, now: string) {
           timestamp(s.at) <= timestamp(now) && timestamp(s.expiresAt) > timestamp(now),
           "信号时间或有效期无效",
         );
-        state.orders[s.id] = { ...s, status: "pending" };
+        if (s.side === "buy") checkEvidenceBuy(state, s.symbol, now);
+        const maxAge = state.config.risk?.maxOrderAgeMinutes;
+        const expiresAt =
+          maxAge === undefined
+            ? s.expiresAt
+            : new Date(Math.min(timestamp(s.expiresAt), timestamp(s.at) + maxAge * 60000)).toISOString();
+        requireThat(timestamp(expiresAt) > timestamp(now), "风险设置中的委托有效期已过期");
+        const live = Object.values(state.orders).filter(
+          (order) => order.symbol === s.symbol && liveOrder(order, state, now),
+        );
+        if (s.side === "sell") {
+          const holding = state.lots
+            .filter((lot) => lot.symbol === s.symbol)
+            .reduce((sum, lot) => sum + lot.quantity, 0);
+          requireThat(s.quantity <= holding, "卖出建议不能超过实际持仓");
+          requireThat(!live.some((order) => order.side === "sell"), "已有有效卖出建议，请先处理原建议");
+          for (const order of live.filter((order) => order.side === "buy")) {
+            order.status = "expired";
+            order.closedReason = "卖出建议优先，结束加仓委托";
+          }
+        } else requireThat(!live.some((order) => order.side === "sell"), "已有卖出建议，退出优先，暂不加仓");
+        state.orders[s.id] = { ...s, expiresAt, status: "pending" };
         break;
       }
       case "decide": {
@@ -120,6 +207,7 @@ function apply(state: State, command: Command, now: string) {
         requireThat(timestamp(at) >= timestamp(order.at) && timestamp(at) <= timestamp(now), "确认时间无效");
         const expired = timestamp(now) >= timestamp(order.expiresAt) || order.strategy !== state.active;
         order.status = command.approve ? (expired ? "expired" : "approved") : "rejected";
+        if (expired && command.approve) order.closedReason = "确认时委托已过期或策略版本已变";
         order.decision = command.approve;
         order.confirmedAt = at;
         order.by = command.by;
@@ -128,12 +216,23 @@ function apply(state: State, command: Command, now: string) {
       case "fill": {
         const order = state.orders[command.signal];
         requireThat(order, "找不到信号");
+        if (order.side === "buy") checkEvidenceBuy(state, order.symbol, now);
         const fill = makeFill(state, order, command.quote, now);
+        checkBuyRisk(state, fill, command.quote, command.quotes, now);
         bookFill(state, fill);
         state.quotes[fill.symbol] = command.quote;
         order.status = "filled";
         break;
       }
+      case "expire-orders":
+        for (const order of Object.values(state.orders)) {
+          const reason = expiryReason(order, state, now);
+          if (reason) {
+            order.status = "expired";
+            order.closedReason = reason;
+          }
+        }
+        break;
       case "mark":
         markQuotes(state, command.quotes, now);
         state.points.push(point(state, now));
@@ -253,16 +352,22 @@ function apply(state: State, command: Command, now: string) {
   state.lastAt = now;
 }
 
+export type LedgerRecord = { id: string; at: string; command: Command; changes: Partial<State> };
+export type LedgerView = { state: State; records: LedgerRecord[] };
+
 // Store computed changes, including fills and fees, so replay never reruns today's market or strategy calculations.
 export class Ledger {
   readonly file: string;
   private db: DatabaseSync;
-  constructor(file: string) {
+  private readOnly: boolean;
+  constructor(file: string, options: { readOnly?: boolean } = {}) {
     this.file = file;
-    this.db = new DatabaseSync(file);
-    this.db.exec(
-      "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, request TEXT NOT NULL, changes TEXT NOT NULL)",
-    );
+    this.readOnly = options.readOnly === true;
+    this.db = new DatabaseSync(file, { readOnly: this.readOnly });
+    if (!this.readOnly)
+      this.db.exec(
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, request TEXT NOT NULL, changes TEXT NOT NULL)",
+      );
   }
   state(): State {
     const state = emptyState();
@@ -270,10 +375,27 @@ export class Ledger {
       Object.assign(state, JSON.parse(String(row.changes)));
     return state;
   }
+  view(at: string): LedgerView {
+    const cutoff = timestamp(at);
+    const state = emptyState();
+    const records: LedgerRecord[] = [];
+    let recordedAt = "";
+    // One SQLite statement provides a consistent read; equal-time rows inherit the preceding recorded timestamp.
+    for (const row of this.db.prepare("SELECT id, request, changes FROM entries ORDER BY seq").iterate()) {
+      const changes = JSON.parse(String(row.changes)) as Partial<State>;
+      recordedAt = changes.lastAt ?? recordedAt;
+      requireThat(recordedAt, "账本记录缺少可恢复时间");
+      if (timestamp(recordedAt) > cutoff) break;
+      Object.assign(state, changes);
+      records.push({ id: String(row.id), at: recordedAt, command: JSON.parse(String(row.request)), changes });
+    }
+    return { state, records };
+  }
   recorded(id: string) {
     return Boolean(this.db.prepare("SELECT 1 FROM entries WHERE id=?").get(id));
   }
   execute(id: string, command: Command, now = new Date().toISOString()) {
+    requireThat(!this.readOnly, "只读账本不接受写入操作");
     requireThat(typeof id === "string" && id.length > 0 && id.length <= 200, "操作编号无效");
     const request = canonical(command);
     this.db.exec("BEGIN IMMEDIATE");

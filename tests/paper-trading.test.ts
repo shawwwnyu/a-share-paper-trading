@@ -370,10 +370,11 @@ test("a passing validation waits for its weekly approval card and preserves old 
     );
     const receipt = readReceipt(output);
     assert.equal(receipt.ask?.length ?? 0, 0, "the trading rule must not repeat the weekly rule's strategy approval");
+    assert.equal(ledger.state().orders["old-signal"].status, "expired");
     ledger.execute(
       "owner-approval",
       { type: "activate", proposal: "v2", approve: true, by: "owner" },
-      time("2026-11-02", "10:03:00"),
+      time("2026-11-02", "18:01:00"),
     );
     assert.equal(ledger.state().active, "v2");
     assert.equal(ledger.state().orders["old-signal"].strategy, "v1");

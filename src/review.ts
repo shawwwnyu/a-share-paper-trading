@@ -63,7 +63,7 @@ export function review(state: State, from: string, to: string) {
       ? "保持不变，估值资料不完整"
       : closed.length < 20
         ? "保持不变，已平仓样本不足"
-        : "核对分策略表现后提出单项修改，验证通过再交本人批准",
+        : "保持不变；如有明确问题，仅登记单项待验证假设，独立验证通过后再交本人批准",
   };
 }
 export function renderReview(result: ReturnType<typeof review>) {

@@ -5,9 +5,13 @@ import { Ledger, valueOf } from "../ledger.ts";
 import { buyQuantity, tradingTime } from "../execution.ts";
 import { quotes, history, isTradingDay } from "../market.ts";
 import { closesAsOf, direction } from "../strategy.ts";
+import { expiryReason, liveOrder, orderedApprovals, orderPriority } from "../risk.ts";
+import { checkSignalQuote, riskSignal } from "../signals.ts";
+import { activityReview, renderActivityReview } from "../activity-review.ts";
+import { saveDailyReview } from "../daily-report.ts";
 import { review, renderReview } from "../review.ts";
 import { chinaDay, requireThat, timestamp } from "../types.ts";
-import type { Command, Dataset, State } from "../types.ts";
+import type { Bar, Command, Dataset, Quote, State, WorkflowCheck } from "../types.ts";
 import type { Settings } from "../config.ts";
 
 type Answer = {
@@ -42,6 +46,10 @@ export function handleAnswers(ledger: Ledger, context: Context, now: string) {
       answer.title === tradeTitle(trade[1]) &&
       JSON.stringify(answer.options) === JSON.stringify(TRADE_OPTIONS)
     ) {
+      if (state.orders[trade[1]].status !== "pending") {
+        messages.push("这笔建议已处理或已过期，保留原记录");
+        continue;
+      }
       ledger.execute(
         `answer-${answer.card}`,
         { type: "decide", signal: trade[1], approve: answer.choice === 0, by: answer.by, decidedAt: answer.at },
@@ -71,7 +79,7 @@ export function handleAnswers(ledger: Ledger, context: Context, now: string) {
 }
 export function pendingCards(state: State, now: string) {
   const cards = [];
-  for (const order of Object.values(state.orders)) {
+  for (const order of Object.values(state.orders).sort(orderPriority)) {
     if (order.status !== "pending" || timestamp(order.expiresAt) <= timestamp(now) || order.strategy !== state.active)
       continue;
     cards.push({
@@ -116,47 +124,119 @@ export function suggestion(state: State, result: ReturnType<typeof review>, now:
 function receipt(summary: string, body: object) {
   return `${summary}\n\n\`\`\`agent-autoloop\n${JSON.stringify(body)}\n\`\`\``;
 }
+function expireOrders(ledger: Ledger, now: string) {
+  const state = ledger.state();
+  if (Object.values(state.orders).some((order) => expiryReason(order, state, now)))
+    ledger.execute(`expire-${now}`, { type: "expire-orders" }, now);
+}
+function recordCheck(ledger: Ledger, check: WorkflowCheck, now: string) {
+  const command = { type: "record-check" as const, check: { ...check, reason: check.reason.slice(0, 4000) } };
+  const id = createHash("sha256").update(JSON.stringify({ now, command })).digest("hex").slice(0, 24);
+  ledger.execute(`check-${id}`, command, now);
+}
+function recordRisk(ledger: Ledger, quotes: Quote[], now: string) {
+  const state = ledger.state();
+  const id = createHash("sha256")
+    .update(JSON.stringify({ now, quotes, lots: state.lots, cash: state.cash, risk: state.config?.risk }))
+    .digest("hex")
+    .slice(0, 24);
+  ledger.execute(`risk-${id}`, { type: "risk-snapshot", quotes }, now);
+}
 export async function cycle(settings: Settings, context: Context, clock = () => new Date().toISOString()) {
   const ledger = new Ledger(settings.database);
   const problems: string[] = [];
   try {
     const now = clock();
     problems.push(...handleAnswers(ledger, context, now));
+    expireOrders(ledger, now);
     let state = ledger.state();
     requireThat(state.config, "请先初始化模拟账户");
     const day = chinaDay(now);
     if (tradingTime(now) && (await isTradingDay(day))) {
-      const observed = await quotes(state.config.symbols);
+      const symbols = [
+        ...new Set([
+          ...(state.watchlistScan ? state.watchlist.map((c) => c.symbol) : state.config.symbols),
+          ...state.lots.map((lot) => lot.symbol),
+        ]),
+      ];
+      const observed: Quote[] = [];
+      for (let start = 0; start < symbols.length; start += 100)
+        observed.push(...(await quotes(symbols.slice(start, start + 100))));
       const checkedAt = clock();
-      for (const order of Object.values(state.orders)) {
-        if (order.status !== "approved" || timestamp(order.expiresAt) <= timestamp(checkedAt)) continue;
+      expireOrders(ledger, checkedAt);
+      for (const q of observed) {
         try {
-          ledger.execute(
-            `fill-${order.id}`,
-            { type: "fill", signal: order.id, quote: observed.find((q) => q.symbol === order.symbol)! },
-            checkedAt,
+          const evaluatedAt = clock();
+          const signal = riskSignal(ledger.state(), q, evaluatedAt);
+          if (signal) ledger.execute(`signal-${signal.id}`, { type: "signal", signal }, evaluatedAt);
+        } catch (error) {
+          problems.push(`${q.symbol} ${(error as Error).message}`);
+          recordCheck(
+            ledger,
+            { kind: "data-failure", scope: "risk", reason: `${q.symbol} ${(error as Error).message}` },
+            clock(),
           );
+        }
+      }
+      for (const order of orderedApprovals(ledger.state(), checkedAt)) {
+        try {
+          const q = observed.find((q) => q.symbol === order.symbol);
+          requireThat(q, `缺少 ${order.symbol} 的本次成交行情`);
+          ledger.execute(`fill-${order.id}`, { type: "fill", signal: order.id, quote: q, quotes: observed }, clock());
         } catch (error) {
           problems.push(`${order.symbol} ${(error as Error).message}`);
+          recordCheck(ledger, { kind: "fill-blocked", signal: order.id, reason: (error as Error).message }, clock());
         }
       }
       state = ledger.state();
-      const data = await history(state.config!.symbols);
+      let bars: Bar[] = [];
+      try {
+        for (let start = 0; start < symbols.length; start += 100)
+          bars.push(...(await history(symbols.slice(start, start + 100))).bars);
+      } catch (error) {
+        problems.push(`历史行情读取失败，已保留风险退出建议：${(error as Error).message}`);
+        recordCheck(ledger, { kind: "data-failure", scope: "history", reason: (error as Error).message }, clock());
+      }
       const active = state.strategies[state.active];
       for (const q of observed) {
-        const past = data.bars
+        state = ledger.state();
+        const past = bars
           .filter((b) => b.symbol === q.symbol && b.day < day)
           .sort((a, b) => a.day.localeCompare(b.day));
         const holding = state.lots.filter((lot) => lot.symbol === q.symbol).reduce((sum, lot) => sum + lot.quantity, 0);
         const side = direction(closesAsOf(past, state.corporateActions, day), active, holding > 0);
         if (!side || !past.length) continue;
+        const created = clock();
         const id = createHash("sha256").update(`${state.active}/${day}/${q.symbol}/${side}`).digest("hex").slice(0, 24);
         if (state.orders[id]) continue;
+        if (
+          Object.values(state.orders).some(
+            (order) =>
+              order.symbol === q.symbol &&
+              order.side === "sell" &&
+              (liveOrder(order, state, created) ||
+                (side === "sell" && chinaDay(order.at) === day && order.strategy === state.active)),
+          )
+        )
+          continue;
         const quantity =
           side === "sell" ? holding : buyQuantity(q.symbol, (state.cash * active.allocationBps) / 10000, q.price);
-        if (!quantity) continue;
-        const created = clock();
+        if (!quantity) {
+          recordCheck(
+            ledger,
+            {
+              kind: "signal-blocked",
+              symbol: q.symbol,
+              side,
+              strategy: active.id,
+              reason: "可用预算或持仓不足最小申报数量",
+            },
+            created,
+          );
+          continue;
+        }
         try {
+          checkSignalQuote(state, q, created);
           ledger.execute(
             `signal-${id}`,
             {
@@ -177,22 +257,36 @@ export async function cycle(settings: Settings, context: Context, clock = () => 
           );
         } catch (error) {
           problems.push((error as Error).message);
+          recordCheck(
+            ledger,
+            { kind: "signal-blocked", symbol: q.symbol, side, strategy: active.id, reason: (error as Error).message },
+            clock(),
+          );
         }
       }
+      recordRisk(ledger, observed, clock());
     }
-    state = ledger.state();
     const finish = clock();
+    expireOrders(ledger, finish);
+    state = ledger.state();
     const resolveCards = (context.open ?? [])
       .filter((card) =>
         Object.values(state.orders).some(
           (order) =>
             card.title === tradeTitle(order.id) &&
-            (timestamp(order.expiresAt) <= timestamp(finish) || order.strategy !== state.active),
+            (order.status === "expired" ||
+              timestamp(order.expiresAt) <= timestamp(finish) ||
+              order.strategy !== state.active),
         ),
       )
       .map((card) => ({ card: card.card, reason: "信号已经过期或策略版本已变，请以新建议为准" }));
     return receipt(problems.length ? `已检查模拟交易，${problems.join("；")}` : "模拟交易检查完成", {
-      ask: pendingCards(state, finish).filter((card) => card.about.startsWith("paper-trade:")),
+      ask: pendingCards(state, finish)
+        .filter(
+          (card) =>
+            card.about.startsWith("paper-trade:") && !(context.open ?? []).some((open) => open.title === card.title),
+        )
+        .slice(0, 5),
       resolve: resolveCards,
     });
   } finally {
@@ -206,7 +300,10 @@ export async function markAccount(settings: Settings, clock = () => new Date().t
     requireThat(state.config, "请先初始化模拟账户");
     const now = clock();
     const day = chinaDay(now);
-    if (ledger.recorded(`close-${day}`)) return "没事可做：今天的收盘估值已经记录";
+    if (ledger.recorded(`close-${day}`)) {
+      saveDailyReview(settings, day, now);
+      return "今天的收盘估值已记录，日报已从账本恢复";
+    }
     if (!(await isTradingDay(day))) return "没事可做：今天休市";
     const observed = await quotes(
       [...new Set(state.lots.map((lot) => lot.symbol))].length
@@ -215,7 +312,9 @@ export async function markAccount(settings: Settings, clock = () => new Date().t
     );
     // The close may be delivered a few seconds after 15:00. Store the actual quote time and record time separately.
     ledger.execute(`close-${day}`, { type: "mark", quotes: observed }, clock());
-    return `模拟账户估值完成，资产 ${(valueOf(ledger.state()).equity / 100).toFixed(2)} 元`;
+    recordRisk(ledger, observed, clock());
+    saveDailyReview(settings, day, clock());
+    return `模拟账户估值及每日复盘完成，资产 ${(valueOf(ledger.state()).equity / 100).toFixed(2)} 元`;
   } finally {
     ledger.close();
   }
@@ -229,7 +328,9 @@ export function weekly(settings: Settings, context: Context, now = new Date().to
     const to = trigger?.receivedAt ?? now;
     const from = new Date(timestamp(to) - 7 * 86400_000).toISOString();
     let state = ledger.state();
-    const result = review(state, from, to);
+    const view = ledger.view(to);
+    const result = review(view.state, from, to);
+    const workflow = activityReview(view, from, to);
     const proposal = suggestion(state, result, to);
     // Training includes this review; holdout data must start on a subsequent day.
     if (proposal?.type === "propose") ledger.execute(`suggest-${proposal.strategy.id}`, proposal, now);
@@ -242,11 +343,11 @@ export function weekly(settings: Settings, context: Context, now = new Date().to
         ledger.execute(`validate-${id}-${hash}`, { type: "validate", proposal: id, dataset: data }, now);
       }
     }
-    const report = renderReview(result);
+    const report = renderReview(result) + renderActivityReview(workflow);
     mkdirSync(settings.reports, { recursive: true });
     const file = join(settings.reports, `${chinaDay(to)}.md`);
     writeFileSync(file, report, { mode: 0o600 });
-    writeFileSync(file.replace(/\.md$/, ".json"), JSON.stringify(result, null, 2), { mode: 0o600 });
+    writeFileSync(file.replace(/\.md$/, ".json"), JSON.stringify({ ...result, workflow }, null, 2), { mode: 0o600 });
     return receipt("模拟交易周度复盘已生成", {
       notice: [
         {
