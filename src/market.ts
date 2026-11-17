@@ -3,6 +3,7 @@ import type { Bar, Dataset, Quote } from "./types.ts";
 
 export const QUOTES = "https://qt.gtimg.cn/q=";
 export const KLINES = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
+export const KLINES_GATEWAY = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get";
 export const CALENDAR = "https://www.szse.cn/api/report/exchange/onepersistenthour/monthList";
 
 export function checkSymbols(symbols: string[]) {
@@ -71,12 +72,15 @@ export function parseQuotes(raw: string, symbols: string[]): Quote[] {
     return found.get(symbol)!;
   });
 }
-async function request(url: string) {
-  const response = await fetch(url, {
+async function rawFetch(url: string) {
+  return fetch(url, {
     signal: AbortSignal.timeout(15000),
     redirect: "error",
     headers: { "user-agent": "Mozilla/5.0" },
   });
+}
+async function request(url: string) {
+  const response = await rawFetch(url);
   requireThat(response.ok, `行情请求失败，HTTP ${response.status}`);
   return response;
 }
@@ -91,8 +95,16 @@ export async function history(symbols: string[], limit = 320): Promise<Dataset> 
   requireThat(limit <= 640, "单次日线数量不超过 640");
   requireThat(!symbols.some((s) => s.startsWith("bj")), "腾讯历史日线不覆盖北交所，请导入经核实的数据文件");
   const bars: Bar[] = [];
+  let endpoint = KLINES;
   for (const symbol of symbols) {
-    const response = await request(`${KLINES}?${new URLSearchParams({ param: `${symbol},day,,,${limit},` })}`);
+    const query = new URLSearchParams({ param: `${symbol},day,,,${limit},` });
+    let response = await rawFetch(`${endpoint}?${query}`);
+    // Tencent STGW WAF serves an HTML 501 JS-challenge page on proxy egress IPs; retry via Tencent Finance API gateway.
+    if (endpoint === KLINES && response.status === 501) {
+      endpoint = KLINES_GATEWAY;
+      response = await rawFetch(`${endpoint}?${query}`);
+    }
+    requireThat(response.ok, `行情请求失败，HTTP ${response.status}`);
     const payload: unknown = await response.json();
     validPayload(payload);
     const node = record(payload.data) ? payload.data[symbol] : undefined;
@@ -121,7 +133,7 @@ export async function history(symbols: string[], limit = 320): Promise<Dataset> 
       bars.push(bar);
     }
   }
-  return { source: KLINES, adjustment: "none", marketRulesVerified: false, corporateActionsVerified: false, bars };
+  return { source: endpoint, adjustment: "none", marketRulesVerified: false, corporateActionsVerified: false, bars };
 }
 export async function isTradingDay(day: string) {
   requireThat(validDay(day), "交易日日期无效");

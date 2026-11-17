@@ -13,7 +13,8 @@ import { startWorkbench } from "./workbench.ts";
 import { saveDailyReview } from "./daily-report.ts";
 import { validateDynamic } from "./dynamic-validation.ts";
 import { runScan } from "./monitor-run.ts";
-import { chat } from "./integrations/chat.ts";
+import { runAgentChat } from "./integrations/chat.ts";
+import { runFeishuInbox } from "./integrations/feishu-inbox.ts";
 
 const [action, file, ...args] = process.argv.slice(2);
 const read = (path: string) => JSON.parse(readFileSync(path, "utf8"));
@@ -112,8 +113,19 @@ try {
     } else if (action === "daily-review") {
       requireThat(args[0], "请指定日报日期，例如 2026-11-13");
       console.log(saveDailyReview(settings, args[0]).markdown);
-    } else if (action === "agent-chat") console.log(chat(settings, context()));
-    else if (action === "market-check") {
+    } else if (action === "agent-chat") console.log(await runAgentChat(settings, context()));
+    else if (action === "feishu-inbox") {
+      requireThat(
+        args[0] && args[1] && process.env.PAPER_FEISHU_SOURCE_KEY,
+        "用法 PAPER_FEISHU_SOURCE_KEY=... node src/cli.ts feishu-inbox <配置文件> <本人open_id> <中台URL> [lark-cli路径]",
+      );
+      await runFeishuInbox({
+        owner: args[0],
+        hubUrl: args[1],
+        sourceKey: process.env.PAPER_FEISHU_SOURCE_KEY,
+        larkProgram: args[2],
+      });
+    } else if (action === "market-check") {
       const result = await checkMarket(
         args[0] ? args[0].split(",") : settings.account.symbols,
         settings.account.maxQuoteAgeSeconds,

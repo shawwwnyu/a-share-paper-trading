@@ -153,3 +153,29 @@ test("HTTP, JSON and quote error responses never produce market data", async (t)
   await assert.rejects(history(["sh600000"]));
   await assert.rejects(isTradingDay("2026-11-13"));
 });
+
+test("daily history falls back to Tencent finance gateway when STGW returns a 501 WAF page", async (t) => {
+  const seen: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    seen.push(`${url.hostname}:${url.searchParams.get("param")}`);
+    if (url.hostname === "web.ifzq.gtimg.cn") {
+      return new Response('<html><script>location.href="https://waf.tencent.com/501page.html"</script></html>', {
+        status: 501,
+      });
+    }
+    if (url.hostname === "proxy.finance.qq.com" && url.pathname === "/ifzqgtimg/appstock/app/fqkline/get") {
+      const symbol = url.searchParams.get("param")!.split(",")[0];
+      return Response.json({ code: 0, data: { [symbol]: { day: [bar] } } });
+    }
+    return new Response("unexpected", { status: 500 });
+  });
+  const data = await history(["sh600000", "sz000001"], 5);
+  assert.equal(data.bars.length, 2);
+  assert.equal(data.source, "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/fqkline/get");
+  assert.deepEqual(seen, [
+    "web.ifzq.gtimg.cn:sh600000,day,,,5,",
+    "proxy.finance.qq.com:sh600000,day,,,5,",
+    "proxy.finance.qq.com:sz000001,day,,,5,",
+  ]);
+});
